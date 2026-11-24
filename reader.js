@@ -109,7 +109,8 @@ function findGenres(low, cls) {
   return out;
 }
 function read(text) {
-  const raw = String(text || ""); const low = deacc(raw); const cls = clauses(low);
+  /* "la disco" / "discoteca" in Spanish is the club, not the genre */
+  const raw = String(text || "").replace(/\b(la|una|las|pa la|pa' la)\s+disco(teca)?s?\b/gi, "$1 fiesta").replace(/\bdiscotecas?\b/gi, "fiesta"); const low = deacc(raw); const cls = clauses(low);
   const tr = { genres: [], moods: [], keywords: [], energy: "", tempo: "", bpm: null, era: null, languages: [], notLanguages: [], explicit: "any", versions: false, avoidHits: false, preferHits: false };
   const out = { name: "", summary: "", include: [], references: [], referenceArtists: [], excludeArtists: [], excludeSongs: [], traits: tr, verifyNames: true };
   const add = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
@@ -118,6 +119,9 @@ function read(text) {
   for (const x of findGenres(low, cls)) { if (x.neg) { add(tr.notStyles = tr.notStyles || [], x.g); continue; } if (!tr.keywords.some(k => gk(k) === gk(x.g))) add(tr.keywords, x.g); }
   tr.keywords = tr.keywords.filter(k => !(tr.notStyles || []).some(n => gk(n) === gk(k)));
   tr.genres = tr.genres.filter(g => !(tr.notStyles || []).some(n => gk(n) === gk(g)));
+  /* "bien perreo" describes the vibe when another style is named; Brazilian funk isn't soul & funk */
+  if (tr.keywords.some(k => !/^perreo$/.test(deacc(k))) && tr.keywords.some(k => /^perreo$/.test(deacc(k)))) { tr.keywords = tr.keywords.filter(k => !/^perreo$/.test(deacc(k))); if (!/\breggaet?on\b/.test(low)) tr.genres = tr.genres.filter(g => g !== "Reggaeton"); if (!tr.moods.includes("Party")) tr.moods.push("Party"); }
+  if (tr.keywords.some(k => /funk (brasileiro|carioca|brasileno)|baile funk|brazilian funk/.test(deacc(k)))) tr.genres = tr.genres.filter(g => g !== "Soul & Funk");
   /* "indie folk" already says "indie" and "folk"; keep the longer name */
   tr.keywords = tr.keywords.filter(k => !tr.keywords.some(o => o !== k && / /.test(o) && deacc(o).split(/[ -]+/).some(w => gk(w) === gk(k) || gk(w) === gk(k).replace(/s$/, ""))));
   // "to dance" style phrases mean danceable, not the Dance genre

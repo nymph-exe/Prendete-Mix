@@ -22,4 +22,6 @@ r = R.read("sad indie folk for a rainy day, like Phoebe Bridgers and Bon Iver");
 r = R.read("90s and early 2000s R&B slow jams, clean versions, like Aaliyah and Brandy"); eq("slow jams romantic", r.traits.moods, ["Romantic"]); eq("slow jams tempo", r.traits.tempo, "slow");
 r = R.read("K-pop dance songs, high energy, hidden gems only"); eq("hidden gems", [r.traits.gems, r.traits.avoidHits], [true, true]);
 r = R.read("no Reggaeton, more Dembow like El Alfa"); eq("ruled-out genre dropped", r.traits.genres, []); eq("genre not an artist", r.excludeArtists, []);
+r = R.read("funk brasileiro para la previa, bien perreo"); eq("perreo is the vibe here", [r.traits.genres, r.traits.keywords], [["Brazilian Music"], ["funk brasileiro"]]);
+r = R.read("perreo intenso para la disco"); eq("la disco is the club", r.traits.keywords, ["perreo"]);
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

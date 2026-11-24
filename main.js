@@ -44,7 +44,7 @@ function dirDetails(pl) {
   if (Array.isArray(f.bpm) && f.bpm[0]) tr.push(`${f.bpm[0]}–${f.bpm[1]} BPM`); else if (f.tempo) tr.push(f.tempo + " tempo");
   if (f.era) tr.push(`${f.era[0]}–${f.era[1]}`); if ((f.langs || []).length) tr.push("in " + f.langs.map(ln).join(" or ")); if ((f.notLangs || []).length) tr.push("nothing in " + f.notLangs.map(ln).join(" or "));
   if (f.explicit === "clean") tr.push("clean only"); if (f.explicit === "explicit") tr.push("explicit preferred");
-  if (f.gems) tr.push("lesser-known artists and deep cuts"); else if (f.avoidHits) tr.push("skipping the most-played hits"); if (f.preferHits) tr.push("leaning popular"); tr.push(f.versions ? "other versions OK" : "original versions only"); lines.push(tr.join(", "));
+  if (f.crowd) tr.push("crowd-pleasers"); if (f.gems) tr.push("lesser-known artists and deep cuts"); else if (f.avoidHits) tr.push("skipping the most-played hits"); if (f.preferHits) tr.push("leaning popular"); tr.push(f.versions ? "other versions OK" : "original versions only"); lines.push(tr.join(", "));
   if ((ex.artists || []).length) lines.push("Never: " + ex.artists.join(", ")); if ((ex.songs || []).length) lines.push(`Never include: ${ex.songs.length} song${ex.songs.length === 1 ? "" : "s"}`);
   return h("div", {}, lines.map(l => h("p", { class: "small", style: "margin:2px 0", text: l })));
 }

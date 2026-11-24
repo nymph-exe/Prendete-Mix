@@ -37,7 +37,8 @@ function rules(pl, never) {
   const block = new Set([...(never || []), ...(ex.artists || [])].map(nn).filter(Boolean));
   return { dir, form, block, exSongs: (ex.songs || []).filter(Boolean), versions: !!form.versions, era: form.era && form.era[0] ? form.era : null, explicit: form.explicit || "any",
     avoidHits: !!form.avoidHits || !!form.gems, gems: !!form.gems, preferHits: !!form.preferHits, langs: form.langs || [], notLangs: form.notLangs || [],
-    holiday: HOLIDAY.test([dir.text, ...(form.keywords || []), ...(form.moods || [])].join(" ")) };
+    holiday: HOLIDAY.test([dir.text, ...(form.keywords || []), ...(form.moods || [])].join(" ")), crowd: !!form.crowd,
+    novelty: /\b(parody|parodies|meme|memes|novelty|joke songs?|funny songs?|kids|children|niños|infantil)\b/i.test(dir.text || "") };
 }
 function blocked(t, R) { return String(t.a || "").split(/;\s*/).some(a => R.block.has(nn(a))) || [...R.block].some(b => b && nn(t.t).includes("feat" + b)); }
 /* language: decided from the lyrics when LRCLIB has them; instrumentals pass; unknown songs are kept but ranked lower */
@@ -62,6 +63,7 @@ function eligible(t, R, getTrack, opts = {}) {
     if (!(m && Core.versionTags(t.t).join() === "language version" && R.langs.includes(LV[m[1].toLowerCase()]))) return "version";
   }
   if (JUNK.test(t.a) || JUNK.test(t.t)) return "junk";
+  if (SC && !R.novelty && String(t.a || "").split(/;\s*/).some(SC.novelty)) return "novelty";
   if (!R.holiday && (HOLIDAY.test(t.t) || HOLIDAY.test(t.al || ""))) return "seasonal";
   if (R.explicit === "clean" && t.exp === "explicit") return "explicit";
   if (R.explicit === "explicit" && t.exp === "clean") return "clean";
@@ -228,7 +230,7 @@ const FAMILIES = [
   ["classic rock", "hard rock", "blues rock", "rock", "album rock", "arena rock", "southern rock", "progressive rock", "glam rock", "heartland rock", "psychedelic rock", "boogie rock", "rock and roll", "folk rock"],
   ["hip hop", "rap", "trap", "pop rap", "gangsta rap", "east coast hip hop", "west coast hip hop", "southern hip hop", "conscious hip hop", "drill"],
   ["house", "deep house", "tech house", "afro house", "progressive house", "electro house", "dance", "edm", "uk garage"],
-  ["dancehall", "reggae", "soca", "ragga"], ["shoegaze", "dream pop", "noise pop", "ethereal wave"], ["phonk", "drift phonk", "brazilian phonk", "memphis rap"],
+  ["dancehall", "reggae", "soca", "ragga"], ["shoegaze", "dream pop", "noise pop", "ethereal wave"], ["phonk", "drift phonk", "brazilian phonk", "memphis rap"], ["funk brasileiro", "funk carioca", "baile funk", "brazilian funk", "funk paulista", "funk mandelão", "funk ostentação"],
   ["ambient", "downtempo", "chillout", "new age", "neoclassical", "modern classical", "piano"]
 ].map(f => new Set(f.map(skey)));
 const GENERIC = new Set(["pop", "rock", "hiphop", "rap", "electronic", "dance", "indie", "folk", "soul", "latin", "jazz", "house", "music", "alternative"]);
@@ -242,11 +244,20 @@ function tagSim(p, a) {
   const pk = skey(p), ak = skey(a); if (!pk || !ak) return 0; if (pk === ak) return 1;
   const ck = pk + "|" + ak; if (SIMC.has(ck)) return SIMC.get(ck);
   const pt = stoks(p), at = stoks(a); let s = 0;
-  if (pt.length && pt.every(x => at.includes(x))) s = .9; /* the artist's tag is a narrower kind of what was asked ("drill" → "uk drill") */
+  if (pt.length && pt.every(x => at.includes(x))) s = at[at.length - 1] === pt[pt.length - 1] ? .9 : .4; /* a narrower kind of what was asked ("drill" → "uk drill"), but "jazz rap" is rap, not jazz */
   else if (at.length && at.every(x => pt.includes(x))) s = at.length === 1 && GENERIC.has(at[0]) ? .3 : .5; /* broader */
   if (FAMILIES.some(f => f.has(pk) && f.has(ak))) s = Math.max(s, .65);
   SIMC.set(ck, s); return s;
 }
+/* ---------- the scene map (scenes.js): who defines each scene, by Deezer artist ID ---------- */
+const SC = G.Scenes || (typeof require !== "undefined" ? (() => { try { return require("./scenes.js"); } catch { return null; } })() : null);
+const SIDS = G.SCENE_IDS || (typeof require !== "undefined" ? (() => { try { return require("./scenes.ids.js"); } catch { return {}; } })() : {});
+const KBID = new Map(); const NAMES = new Map(); /* Deezer id → scene memberships ; Deezer id → artist name */
+if (SC) for (const [n, [id]] of Object.entries(SIDS)) { const m = SC.of(n); if (m.length) { KBID.set(id, m); NAMES.set(id, n); } }
+const kbOf = id => KBID.get(id) || (SC && NAMES.has(id) ? SC.of(NAMES.get(id)) : []);
+const noteName = (id, name) => { if (id && name && !NAMES.has(id)) NAMES.set(id, name); };
+/* a scene member counts as carrying the scene's genre tags, even where community tags are missing */
+const kbVec = id => { const m = kbOf(id); if (!m.length || !SC) return null; const out = new Map(); for (const { key, tier } of m) for (const t of SC.SCENES[key].tags) out.set(t, Math.max(out.get(t) || 0, tier === "core" ? 1 : .9)); return [...out]; };
 const vecOf = tags => { const e = Object.entries(tags || {}).filter(([t]) => !JUNK_TAG.test(t)); if (!e.length) return null; const mx = Math.max(...e.map(x => x[1]));
   return e.map(([t, c]) => [t, Math.sqrt(c / mx)]).sort((a, b) => b[1] - a[1]).slice(0, 12); };
 const bestIn = (p, V) => { let b = 0; for (const [a, w] of V) { const s = tagSim(p, a) * w; if (s > b) b = s; } return b; };
@@ -270,7 +281,7 @@ function artSave() { if (!G.localStorage || artTimer) return; artTimer = setTime
 const nameOk = (a, b) => { const x = Core.norm(a).replace(/\s+/g, ""), y = Core.norm(b).replace(/\s+/g, ""); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
 async function stylesFor(tracks, { retry = false } = {}) {
   const need = [], ids = new Set();
-  artLoad();
+  artLoad(); for (const t of tracks) if (t && t.aid && t.aid[0]) noteName(t.aid[0], Core.firstArtist(t.a));
   for (const t of tracks) { const id = t && (t.aid || [])[0]; if (!id || !t.t || ids.has(id)) continue; const a = ART.get(id); if (a && !(retry && !a.v && !a.mbq)) continue; ids.add(id); need.push(t); }
   if (!need.length) return;
   if (retry) need.forEach(t => { const a = ART.get(t.aid[0]); if (a) a.mbq = 1; });
@@ -304,6 +315,27 @@ async function discogsFill(list, budget) {
     const prev = ART.get(x.id) || {}; ART.set(x.id, Object.assign({}, prev, { v: st ? vecOf(st) : null, dg: 1, at: Date.now() })); }));
   artSave();
 }
+/* which scenes this playlist is about: named styles, reference artists, and (for long histories) where its approvals live */
+function scenesFor(P, S) {
+  const W = new Map(); if (!SC) return W; const add = (k, w) => W.set(k, (W.get(k) || 0) + w);
+  const era = P.R.era, overlap = sc => !era || !sc.era || (sc.era[0] <= era[1] && sc.era[1] >= era[0]);
+  for (const sc of Object.values(SC.SCENES)) {
+    let m = 0; for (const p of S.want) for (const t of sc.tags) m = Math.max(m, tagSim(p, t));
+    if (!S.want.length) for (const p of S.broad) for (const t of sc.tags.slice(0, 2)) m = Math.max(m, .6 * tagSim(p, t));
+    if (m >= .85 || (!S.want.length && m >= .5)) add(sc.key, m * (overlap(sc) ? 1 : .15));
+  }
+  /* the artists the user named say the most: their scenes */
+  const named = [...P.refs.map(t => (t.aid || [])[0]), ...(P.R.dir.artists || []).map(a => a.id)].filter(Boolean);
+  const nm = new Map(); for (const id of named) for (const { key, tier } of kbOf(id)) nm.set(key, (nm.get(key) || 0) + (tier === "core" ? 1 : .8));
+  const nmax = Math.max(0, ...nm.values()); for (const [k, v] of nm) if (!S.want.length || W.has(k) || v >= nmax * .99) add(k, 1.2 * v / Math.max(1, nmax));
+  /* approvals (not auto-filled): a playlist's history places it in scenes; rejections in a scene pull it down */
+  if (!S.want.length) { const ap = new Map(), rj = new Map(); let n = 0;
+    for (const t of P.ev.manual) { const m = kbOf((t.aid || [])[0]); if (!m.length) continue; n++; m.forEach(({ key }) => ap.set(key, (ap.get(key) || 0) + 1 / m.length)); }
+    for (const r of P.ev.rejected) kbOf((r.t.aid || [])[0]).forEach(({ key }) => rj.set(key, (rj.get(key) || 0) + 1));
+    if (n >= 8) for (const [k, v] of ap) { const share = v / n; if (share >= .05 && v >= 2) add(k, Math.min(1, share * 4) * (v + 1) / (v + 1 + .5 * (rj.get(k) || 0))); } }
+  const top = [...W].sort((a, b) => b[1] - a[1]).slice(0, 6); const mx = top.length ? top[0][1] : 1;
+  return new Map(top.filter(([, v]) => v >= mx * .2).map(([k, v]) => [k, v / mx]));
+}
 async function styleProfile(P, ctx, say) {
   const f = P.R.form; const want = wantStyles(f);
   const broad = [...new Set((f.genres || []).flatMap(g => DZ_TAGS[g.name] || []))];
@@ -327,6 +359,8 @@ async function styleProfile(P, ctx, say) {
     const self = sample.map(([t]) => ART.get(t.aid[0])).filter(a => a && a.v).map(a => S.taste.reduce((s, [t, w]) => s + w * bestIn(t, a.v), 0));
     S.ref = Math.max(.15, avg(self) || .3); S.tasteN = self.length; }
   S.info = !!(want.length || broad.length || S.taste.length);
+  S.scenes = scenesFor(P, S);
+  if (S.scenes.size) S.info = true;
   /* several named styles ("afrobeats and amapiano"): keep a mix of them */
   S.balance = want.length >= 2 && (f.keywords || []).length >= 2 && !want.includes("lo-fi hip hop");
   for (const c of P.W.values()) c.sf = styleFit(c.id, S);
@@ -334,8 +368,8 @@ async function styleProfile(P, ctx, say) {
 }
 /* → {fit 0..1 or null, known, wf: fit to the named styles, no: hits a style the user ruled out} */
 function styleFit(id, S) {
-  const a = ART.get(id); if (!a || !a.v || !S.info) return { fit: null, known: false };
-  const V = a.v;
+  const a = ART.get(id), kv = kbVec(id); if ((!a || !a.v) && !kv) return { fit: null, known: false }; if (!S.info) return { fit: null, known: false };
+  const V = kv ? [...new Map([...(a && a.v ? a.v : []), ...kv].sort((x, y) => x[1] - y[1]))].sort((x, y) => y[1] - x[1]) : a.v;
   if (S.notS.length && V.slice(0, 3).some(([t, w]) => w >= .6 && S.notS.some(n => tagSim(n, t) >= .9))) return { fit: 0, known: true, wf: 0, no: true };
   const wf = S.want.length ? Math.max(...S.want.map(p => bestIn(p, V))) : null;
   const bf = S.broad.length ? Math.max(...S.broad.map(p => bestIn(p, V))) : null;
@@ -372,7 +406,7 @@ const Classic = {
     for (const c of P.W.values()) c.trust = c.tags.has("ref") || c.tags.has("pl") || P.pool.some(t => t._trust && (t.aid || [])[0] === c.id);
     const seedSF = s => (s.sf && s.sf.known ? s.sf.fit : s.trust ? .55 : .3);
     const pos = [...P.W.values()].filter(c => c.w > 0 && styleGate(c.sf || {}, S, c.trust))
-      .map(c => Object.assign(c, { ws: c.w * (S.info ? .15 + styleScore(c.sf || {}, S) : 1) })).sort((a, b) => b.ws - a.ws);
+      .map(c => Object.assign(c, { ws: c.w * (S.info ? .15 + styleScore(c.sf || {}, S) : 1) * (S.strict && S.scenes && S.scenes.size && !c.tags.has("ref") && !c.tags.has("pl") && !kbOf(c.id).some(m => S.scenes.has(m.key)) ? .4 : 1) })).sort((a, b) => b.ws - a.ws); /* chart and playlist artists outside the map's scenes seed less */
     const seeds = []; const sp = pos.slice(0, 60);
     /* a broad taste (many approved artists) gets more, flatter-weighted seeds so one favorite doesn't crowd out the rest */
     const nSeeds = Math.min(20, 12 + Math.floor(pos.filter(c => c.known).length / 15)), flat = pos.filter(c => c.known).length >= 20 ? .5 : 1;
@@ -382,7 +416,7 @@ const Classic = {
     /* "hidden gems": artists with huge followings count for less (Deezer fans) */
     const gem = fans => (!fans || !P.R.avoidHits ? 1 : P.R.gems ? (fans > 400000 ? 0 : 1 / (1 + fans / 60000)) : 1 / (1 + fans / 1500000) ** .6);
     const addC = (id, name, score, from, via, sfrom, song, fans) => { if (!id || !name || P.avoid.has(Core.norm(name)) || blocked({ a: name, t: "" }, P.R)) return;
-      if (gem(fans) === 0) return; const c = cand.get(id) || { id, name, score: 0, from: new Set(), via, seedFit: 0, fans }; c.score += score * gem(fans) * (P.doubt.has(Core.norm(name)) ? .4 : 1); if (from) c.from.add(from); if (sfrom != null) c.seedFit = Math.max(c.seedFit, sfrom); if (song && !c.song) c.song = song; cand.set(id, c); };
+      noteName(id, name); if (gem(fans) === 0) return; const c = cand.get(id) || { id, name, score: 0, from: new Set(), via, seedFit: 0, fans }; c.score += score * gem(fans) * (P.doubt.has(Core.norm(name)) ? .4 : 1); if (from) c.from.add(from); if (sfrom != null) c.seedFit = Math.max(c.seedFit, sfrom); if (song && !c.song) c.song = song; cand.set(id, c); };
     const firstName = s => String(s || "").split(/\s+(?:&|feat\.?|ft\.?|x|×|with)\s+|,\s*/i)[0].trim();
     say("Exploring artists near your picks…");
     const relJob = Promise.all(seeds.map(async s => { if (stop()) return; try { (await Deezer.related(s.id, 20)).forEach((a, rank) => addC(a.id, a.name, s.ws * (P.ev.manual.length >= 50 && !S.strict ? .6 : 1) / (1 + rank * .12), s.name, "related", seedSF(s), null, a.fans)); } catch { fails++; } }));
@@ -413,12 +447,21 @@ const Classic = {
       const mx = Math.max(1, ...top.map(x => x[1].k));
       await Promise.all(top.map(async ([n, g]) => { if (stop()) return; try { const a = await Deezer.artistByName(n, 300); if (a) addC(a.id, a.name, base * (.45 + .55 * g.k / mx), g.tag, "tag", .6, null, a.fans); } catch {} }));
     })().catch(() => {});
+    /* the scene map: the artists who define (core) or carry (next) each scene this playlist is about */
+    const kbJob = (async () => {
+      if (!S.scenes || !S.scenes.size) return; const gemsK = P.R.gems, seenK = new Set();
+      const kbLong = !S.strict && P.ev.manual.length >= 50; /* a long approval history outranks the map */
+      for (const [key, w] of S.scenes) { const sc = SC.SCENES[key]; if (!sc) continue;
+        const tiers = [["core", sc.core, gemsK ? .35 : P.R.avoidHits ? .85 : 1.1], ["next", sc.next, gemsK ? 1.1 : .85]];
+        for (const [tier, list, tw] of tiers) for (const n of list.slice().sort(() => Math.random() - .5).slice(0, 14)) { const e = SIDS[n]; if (!e || seenK.has(e[0])) continue; seenK.add(e[0]); noteName(e[0], n);
+          addC(e[0], n, base * w * tw * (kbLong ? .45 : 1), sc.name, "kb", 1, null, e[1]); const c = cand.get(e[0]); if (c) { c.via = c.via === "ref" ? "ref" : "kb"; c.kb = c.kb || { scene: sc.name, tier }; } } }
+    })();
     const radio = [];
     const own = pos.filter(c => c.tags.has("ref") || c.tags.has("pl"));
     const radioJob = Promise.all((own.length ? own : pos).slice(0, 3).map(async s => { if (stop()) return; try { const tr = await Deezer.radio(s.id, 25); tr.forEach(t => { t._why = `On ${s.name}'s Deezer radio`; t._trust = !S.strict && seedSF(s) >= .5; }); radio.push(...tr); } catch {} }));
     /* artists the user keeps rejecting: their close neighbours rank lower too */
     const NEG = new Map(); const negJob = Promise.all(P.negIds.map(async id => { try { (await Deezer.related(id, 20)).forEach((a, k) => NEG.set(a.id, (NEG.get(a.id) || 0) + (k < 10 ? 1 : .5))); } catch {} }));
-    await Promise.all([relJob, lbJob, recJob, tagJob, radioJob, negJob]);
+    await Promise.all([relJob, lbJob, recJob, tagJob, radioJob, negJob, kbJob]);
     for (const c of cand.values()) { const n = NEG.get(c.id) || 0; if (n && !(P.W.get(c.id) || {}).known) c.score /= 1 + .7 * n; }
     if (P.R.gems && !stop()) { /* lesser-known artists cluster together: one more hop from the smallest in-style names */
       const small = [...cand.values()].filter(c => c.fans && c.fans < 150000 && c.via !== "lbrec" && styleGate(styleFit(c.id, S), S, true)).sort((a, b) => b.score - a.score).slice(0, 10);
@@ -441,11 +484,15 @@ const Classic = {
     const pg = []; for (let i = 0; i < rpool.length; i += 12) pg.push({ pool: true, tracks: rpool.slice(i, i + 12) }); for (let i = 0; i < Math.min(opool.length, 240); i += 12) pg.push({ pool: true, tracks: opool.slice(i, i + 12) });
     pg.forEach((g, i) => order.splice(Math.min(order.length, i * 3 + (i ? 1 : 0)), 0, g));
     const maxScore = Math.max(1, ...fresh.map(c => c.score), ...known.map(c => c.score));
-    const trustedC = c => ["ref", "known", "tag"].includes(c.via) || c.seedFit >= .5 || (c.from.size >= 2 && c.seedFit >= .3);
+    const trustedC = c => ["ref", "known", "tag", "kb"].includes(c.via) || c.seedFit >= .5 || (c.from.size >= 2 && c.seedFit >= .3);
     // per-artist counts in this playlist (approved + pending) to avoid narrow loops (QUAL-006)
     const songKey = t => Core.norm(Core.baseTitle(t.t) || t.t) + "|" + primary(t);
     const latest = ctx.latest(); const inPl = new Map(); const runKeys = new Set(Object.keys(latest.rels).map(k => ctx.getTrack(k)).filter(Boolean).map(songKey));
-    for (const k in latest.rels) { const r = latest.rels[k]; if (r.state === "REJECTED") continue; const t = ctx.getTrack(k); if (t) inPl.set(primary(t), (inPl.get(primary(t)) || 0) + 1); }
+    /* per-artist room: pending recommendations count fully; approved songs only beyond a fair share of a big playlist */
+    const nAp = Core.idsIn(latest, "APPROVED").length, apShare = Math.max(4, Math.ceil(.08 * nAp)); const apCount = new Map();
+    for (const k in latest.rels) { const r = latest.rels[k]; if (r.state === "REJECTED") continue; const t = ctx.getTrack(k); if (!t) continue; const a = primary(t);
+      if (r.state === "APPROVED") apCount.set(a, (apCount.get(a) || 0) + 1); else inPl.set(a, (inPl.get(a) || 0) + 1); }
+    for (const [a, n] of apCount) inPl.set(a, (inPl.get(a) || 0) + Math.max(0, n - apShare + 4));
     const plCap = P.pat.repetition ? 2 : 4, capNew = P.pat.repetition ? 1 : 2, capKnown = P.pat.repetition ? 0 : broadTaste ? 2 : 1, capRef = P.pat.repetition ? 1 : 3;
     const refIds = new Set(pos.filter(c => c.tags.has("ref")).map(c => c.id)); const isRef = t => refIds.has((t.aid || [])[0]);
     const capOf = t => (isRef(t) ? capRef : capNew);
@@ -478,11 +525,13 @@ const Classic = {
       const styleOk = x => { if (!S.strict) return true; const sf = styleFit((x.t.aid || [])[0], S); return !sf.known || styleGate(sf, S, true); };
       const sc = b.filter(x => !x.eraOut && styleOk(x) && !eligible(x.t, P.R, ctx.getTrack)).map(x => { const { fit, known, asked, est } = fitOf(x.t, P); const pen = penalty(x.t, P);
         const negP = (P.doubt.has(primary(x.t)) ? .5 : 0) + .25 * Math.min(2, NEG.get((x.t.aid || [])[0]) || 0);
+        const km = (broadTaste ? .5 : 1) * (S.scenes && S.scenes.size ? kbOf((x.t.aid || [])[0]).reduce((u, { key, tier }) => Math.max(u, (S.scenes.get(key) || 0) * (tier === "core" ? (P.R.gems ? .1 : .3) : (P.R.gems ? .4 : .25))), 0) : 0);
+        const crowdB = P.R.crowd ? .45 * Math.min(1, (x.t.rank || 0) / 600000) - (x.t.exp === "explicit" ? .25 : 0) : 0;
         const refB = isRef(x.t) ? .3 : 0; const yd = P.yr && x.t.y ? (x.t.y < P.yr.lo ? P.yr.lo - x.t.y : x.t.y > P.yr.hi ? x.t.y - P.yr.hi : 0) : 0; const yearP = .12 * Math.min(4, yd);
         const wi = wantIdx(x.t); const mix = S.balance && wi >= 0 && (WC[wi] || 0) < (found + 1) / S.want.length ? .35 : 0;
         /* unless hits are unwanted, a scene's well-known songs are the safer picks */
         const hot = P.R.avoidHits ? .6 * Math.max(0, Math.min(1, ((x.t.rank || 0) - (P.R.gems ? 250000 : 450000)) / 400000)) : P.R.preferHits ? 0 : -.25 * Math.min(1, (x.t.rank || 0) / 700000);
-        return Object.assign(x, { fit, wi, s: .7 * (x.as / maxScore) + 1.1 * fit + SW * styleScore(x.sf || {}, S) + .25 * Math.random() - pen - hot + mix + refB - yearP - negP, ok: !(known && fit < (isRef(x.t) && !P.moodT.length ? .3 : asked ? .42 : .35) - (est ? .05 : 0)) && pen < 1.2 && !(P.R.avoidHits && x.t.f && x.t.f.pop >= 85) && !learnedOut(x.t, P) }); });
+        return Object.assign(x, { fit, wi, s: .7 * (x.as / maxScore) + 1.1 * fit + SW * styleScore(x.sf || {}, S) + .25 * Math.random() - pen - hot + mix + refB - yearP - negP + km + crowdB, ok: !(known && fit < (isRef(x.t) && !P.moodT.length ? .3 : asked ? .42 : .35) - (est ? .05 : 0)) && pen < 1.2 && !(P.R.avoidHits && x.t.f && x.t.f.pop >= 85) && !learnedOut(x.t, P) }); });
       if (opt.debug) opt.debug("flush", sc.map(x => [x.t.t, primary(x.t), x.ok, +x.s.toFixed(2), +x.fit.toFixed(2), x.why.slice(0, 30)]));
       const okd = sc.filter(x => x.ok).sort((a, b) => b.s - a.s); const per = new Map(); const keep = [];
       const room = Math.min(target - found, last ? okd.length : Math.max(1, Math.ceil(okd.length * .7)));
@@ -529,7 +578,7 @@ const Classic = {
         if (!t) return; checked++; if (eligible(Object.assign({}, t, { lang: null }), P.R, ctx.getTrack)) return;
         const c = picks[k].c; const from = [...(c.from || [])].filter(Boolean).slice(0, 2);
         const why = c.pool ? picks[k].t0._why : c.via === "known" ? `More from ${c.name}, already on this playlist` : c.via === "ref" ? `By ${c.name}, one of your reference artists`
-          : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : `Near ${from.join(" and ") || c.name}`;
+          : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : c.via === "kb" && c.kb ? (c.kb.tier === "core" ? `One of the artists who define ${c.kb.scene}` : `A newer or deeper name in ${c.kb.scene}`) : `Near ${from.join(" and ") || c.name}`;
         buf.push({ t, why, as: c.pool ? maxScore * (t._trust ? .6 : .4) : c.score, sf: picks[k].sf });
       });
       if (buf.length >= 12 || (buf.length && found + buf.length * .7 >= target + 2)) await flush();
@@ -786,12 +835,13 @@ async function applyReading(j, st, o = {}) {
   for (const l of (tr.notLanguages || []).map(iso).filter(l => Cat.LANG_NAMES[l])) if (!(f.notLangs || []).includes(l)) f.notLangs = [...(f.notLangs || []), l];
   f.notLangs = (f.notLangs || []).filter(l => !(f.langs || []).includes(l));
   if (tr.explicit === "clean" || tr.explicit === "explicit") f.explicit = tr.explicit;
+  if (tr.crowd || /\b(wedding|boda|road ?trip|karaoke|sing-?along|family|familia|graduation|graduaci[oó]n|quincea[nñ]era|bbq|barbecue|carne asada|reunion|reuni[oó]n)\b/i.test(txt)) f.crowd = true;
   if (tr.versions) f.versions = true; if (tr.avoidHits) { f.avoidHits = true; f.preferHits = false; }
   if (tr.gems || /\b(hidden gems?|underground|deep cuts?|lesser[- ]known|obscure|under the radar|joyitas?|poco conocid[oa]s?)\b/i.test(txt)) { f.gems = true; f.avoidHits = true; f.preferHits = false; } if (tr.preferHits && !f.avoidHits) f.preferHits = true;
   return { summary: j.summary || "", missing: [...new Set(missing)], unchecked: [...new Set(unchecked)] };
 }
 
-const API = { workingModel, applyReading, Classic, styleProfile, styleFit, stylesFor, MBQ, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
+const API = { workingModel, applyReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
 G.Engines = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

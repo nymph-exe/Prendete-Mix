@@ -18,4 +18,14 @@ ok("off-style artist gated", E.styleFit(1, S).wf < .45);
 ok("in-style artist passes", E.styleFit(2, S).wf >= .45);
 const S2 = { want: ["house"], broad: [], notS: ["edm"], taste: [], ref: .3, strict: true, info: true };
 ok("ruled-out style", E.styleFit(3, S2).no === true);
+// the scene map
+const SC = require(D + "/scenes.js"); globalThis.Scenes = SC;
+ok("scene map loads", Object.keys(SC.SCENES).length >= 80, Object.keys(SC.SCENES).length);
+ok("an artist belongs to its scene", SC.of("Peso Pluma").some(m => m.key === "corridos_tumbados"));
+ok("novelty acts are known", SC.novelty("Big Shaq") && !SC.novelty("Skepta"));
+ok("\"jazz rap\" is not jazz", E.tagSim("jazz", "jazz rap") < .45, E.tagSim("jazz", "jazz rap"));
+const P0 = { R: { era: null, dir: {} }, refs: [], ev: { manual: [], rejected: [] } };
+const pick = kw => [...E.scenesFor(P0, { want: E.wantStyles({ keywords: kw }), broad: [], notS: [], taste: [], strict: true }).keys()];
+ok("UK drill and grime pick their scenes", JSON.stringify(pick(["uk drill", "grime"]).sort()) === JSON.stringify(["grime", "uk_drill"]), pick(["uk drill", "grime"]));
+ok("Brazilian funk picks its scene", pick(["funk brasileiro"])[0] === "funk_brasileiro", pick(["funk brasileiro"]));
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;
