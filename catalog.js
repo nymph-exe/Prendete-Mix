@@ -67,8 +67,8 @@ const Deezer = {
       dur: t.duration || 0, rank: t.rank || 0, cov: https(al.cover_medium) || null, prev: https(t.preview), prevAt: Date.now(), link: https(t.link), full: !!t.isrc };
   },
   async search(q, limit = 20) { const d = await dz("/search?q=" + encodeURIComponent(q) + "&limit=" + limit); return ((d && d.data) || []).filter(t => t && t.readable !== false).map(t => this.parse(t)); },
-  async artists(q, limit = 6) { const d = await dz("/search/artist?q=" + encodeURIComponent(q) + "&limit=" + limit); return ((d && d.data) || []).map(a => ({ id: a.id, name: a.name, pic: https(a.picture_medium), fans: a.nb_fan || 0 })); },
-  async artist(id) { const a = await dz("/artist/" + id); return a && a.id ? { id: a.id, name: a.name, pic: https(a.picture_medium), fans: a.nb_fan || 0 } : null; },
+  async artists(q, limit = 6) { const d = await dz("/search/artist?q=" + encodeURIComponent(q) + "&limit=" + limit); return ((d && d.data) || []).map(a => ({ id: a.id, name: a.name, pic: https(a.picture_medium), fans: a.nb_fan || 0, albums: a.nb_album || 0 })); },
+  async artist(id) { const a = await dz("/artist/" + id); return a && a.id ? { id: a.id, name: a.name, pic: https(a.picture_medium), fans: a.nb_fan || 0, albums: a.nb_album || 0 } : null; },
   async track(id) { const t = await dz("/track/" + id); return t && t.id ? this.parse(t) : null; },
   async byIsrc(isrc) { try { const t = await dz("/track/isrc:" + encodeURIComponent(isrc)); return t && t.id ? this.parse(t) : null; } catch { return null; } },
   async related(id, limit = 20) { const d = await dz(`/artist/${id}/related?limit=${limit}`); return ((d && d.data) || []).map(a => ({ id: a.id, name: a.name, fans: a.nb_fan || 0 })); },

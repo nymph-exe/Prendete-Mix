@@ -83,13 +83,18 @@ async function mbArtists(q) {
   return ((d && d.artists) || []).filter(a => (a.score || 0) >= 60).map(a => ({ mb: a.id, name: a.name, score: a.score || 0, dis: a.disambiguation || "",
     country: a.country || (a.area && a.area.name) || "", begin: String((a["life-span"] || {}).begin || "").slice(0, 4), type: a.type || "" }));
 }
-async function wdLinks(mbids) {
-  const out = new Map(); const list = uniq(mbids.filter(x => /^[0-9a-f-]{36}$/.test(x || ""))); if (!list.length) return out;
-  const rows = await Wikidata.query(`SELECT ?mb ?dz ?am ?d WHERE { VALUES ?mb { ${list.map(x => `"${x}"`).join(" ")} } ?a wdt:P434 ?mb. OPTIONAL{?a wdt:P2722 ?dz} OPTIONAL{?a wdt:P2850 ?am} OPTIONAL{?a schema:description ?d FILTER(lang(?d)="en")} }`);
-  for (const b of rows) { const k = b.mb.value, o = out.get(k) || { dz: [], it: [], about: "" };
-    if (b.dz && /^\d+$/.test(b.dz.value)) o.dz.push(+b.dz.value); if (b.am && /^\d+$/.test(b.am.value)) o.it.push(+b.am.value); if (b.d && !o.about) o.about = b.d.value; out.set(k, o); }
-  for (const o of out.values()) { o.dz = uniq(o.dz); o.it = uniq(o.it); }
-  return out;
+/* Wikidata items for these MusicBrainz and Deezer IDs, in one query: each artist's IDs on all three services,
+   a short description, and how many Wikipedias cover them (a sign of how established they are) */
+async function wdItems(mbids, dzids) {
+  const ms = uniq(mbids.filter(x => /^[0-9a-f-]{36}$/.test(x || ""))), ds = uniq(dzids.map(String).filter(x => /^\d+$/.test(x)));
+  if (!ms.length && !ds.length) return [];
+  const parts = []; if (ms.length) parts.push(`{ VALUES ?m0 { ${ms.map(x => `"${x}"`).join(" ")} } ?a wdt:P434 ?m0 }`); if (ds.length) parts.push(`{ VALUES ?d0 { ${ds.map(x => `"${x}"`).join(" ")} } ?a wdt:P2722 ?d0 }`);
+  const rows = await Wikidata.query(`SELECT ?a ?mb ?dz ?am ?d ?sl WHERE { ${parts.join(" UNION ")} OPTIONAL{?a wdt:P434 ?mb} OPTIONAL{?a wdt:P2722 ?dz} OPTIONAL{?a wdt:P2850 ?am} OPTIONAL{?a schema:description ?d FILTER(lang(?d)="en")} OPTIONAL{?a wikibase:sitelinks ?sl} }`);
+  const by = new Map();
+  for (const b of rows) { const o = by.get(b.a.value) || { mb: [], dz: [], it: [], about: "", sl: 0 };
+    if (b.mb) o.mb.push(b.mb.value); if (b.dz && /^\d+$/.test(b.dz.value)) o.dz.push(+b.dz.value); if (b.am && /^\d+$/.test(b.am.value)) o.it.push(+b.am.value);
+    if (b.d && !o.about) o.about = b.d.value; if (b.sl) o.sl = Math.max(o.sl, +b.sl.value || 0); by.set(b.a.value, o); }
+  return [...by.values()].map(o => ({ mb: uniq(o.mb), dz: uniq(o.dz), it: uniq(o.it), about: o.about, sl: o.sl }));
 }
 async function mbUrls(mbid) {
   const d = await MusicBrainz.get(`artist/${mbid}?inc=url-rels`); const o = { dz: [], it: [] };
@@ -130,6 +135,25 @@ function aboutOf(g) {
   const bits = [g.type === "Group" ? "Group" : g.type === "Person" ? "" : "", g.country, g.begin ? "since " + g.begin : ""].filter(Boolean);
   return bits.join(", ");
 }
+/* Most-followed and most-established first, whatever was typed. Followers on Deezer lead, with their number of
+   releases; without Deezer, how many Wikipedias cover them. An exact name counts for a little (about 3× the
+   followers), and a result that only matched through another name (an alias, a real name) counts for less. */
+const popularity = g => (g.fans ? Math.log10(g.fans + 1) + .25 * Math.log10((g.albums || 0) + 1) : g.sl ? .8 + 1.3 * Math.log10(g.sl + 1) : 0);
+function relevance(q) {
+  const k = nn(q), words = String(q).toLowerCase().split(/\s+/).map(nn).filter(Boolean);
+  const named = n => n.includes(k) || k.includes(n) || words.every(w => n.includes(w));
+  return g => { const n = nn(g.name); return popularity(g) + (n === k ? .5 : 0) - (named(n) ? 0 : 2); };
+}
+/* The quick artist search in the playlist editor: Deezer only, ranked the same way. Artists credited on the top
+   matching songs are included too, because Deezer's artist search misses some ("taylor" → no Taylor Swift). */
+async function quick(q, tracks = [], lim = 3) {
+  const rel = relevance(q), k = nn(q);
+  const list = await Deezer.artists(q, 10); const ids = new Set(list.map(a => a.id)), extra = [];
+  for (const t of tracks) { const ns = String(t.a || "").split(/;\s*/), aid = t.aid || []; if (ns.length !== aid.length) continue;
+    aid.forEach((id, i) => { const n = nn(ns[i]); if (!ids.has(id) && (n.includes(k) || k.includes(n))) { ids.add(id); extra.push(id); } }); }
+  const more = (await Promise.all(extra.slice(0, 5).map(id => Deezer.artist(id).catch(() => null)))).filter(Boolean);
+  return list.concat(more).sort((a, b) => rel(b) - rel(a)).slice(0, lim);
+}
 /* Search Deezer, MusicBrainz and Apple Music together and return one row per real artist. */
 async function find(q, o = {}) {
   const say = o.say || (() => {}); q = String(q || "").trim(); const failed = [];
@@ -140,24 +164,34 @@ async function find(q, o = {}) {
   const dzA = dzR.status === "fulfilled" ? dzR.value : (failed.push("Deezer"), []);
   const itA = itR.status === "fulfilled" ? itR.value : (failed.push("Apple Music"), []);
   const mbA = mbR.status === "fulfilled" ? mbR.value : (failed.push("MusicBrainz"), []);
-  let links = new Map(); if (mbA.length) { try { links = await wdLinks(mbA.map(a => a.mb)); } catch { failed.push("Wikidata"); } }
-  const groups = mbA.map(a => { const l = links.get(a.mb) || { dz: [], it: [], about: "" };
-    return { name: a.name, mb: a.mb, about: l.about || a.dis, country: a.country, begin: a.begin, type: a.type, dz: l.dz.slice(), it: l.it.slice(), score: a.score, pic: null, fans: 0, genre: "", dupes: 0 }; });
+  let items = []; try { items = await wdItems(mbA.map(a => a.mb), dzA.map(a => a.id)); } catch { failed.push("Wikidata"); }
+  /* several Wikidata items can carry the same ID (Daddy Yankee has an empty second one): merge them, keeping the
+     description of the best-covered one */
+  const itemFor = pred => { const ms = items.filter(pred).sort((a, b) => b.sl - a.sl); if (!ms.length) return null;
+    return { mb: uniq(ms.flatMap(i => i.mb)), dz: uniq(ms.flatMap(i => i.dz)), it: uniq(ms.flatMap(i => i.it)), about: (ms.find(i => i.about) || {}).about || "", sl: ms[0].sl }; };
+  const none = { mb: [], dz: [], it: [], about: "", sl: 0 };
+  const groups = mbA.map(a => { const l = itemFor(i => i.mb.includes(a.mb)) || none;
+    return { name: a.name, mb: a.mb, about: l.about || a.dis, country: a.country, begin: a.begin, type: a.type, dz: l.dz.slice(), it: l.it.slice(), sl: l.sl, score: a.score, pic: null, fans: 0, albums: 0, genre: "", dupes: 0 }; });
+  /* Deezer artists Wikidata knows that the MusicBrainz search didn't return */
+  for (const a of dzA) { if (groups.some(g => g.dz.includes(a.id))) continue; const i = itemFor(i => i.dz.includes(a.id)); if (!i) continue;
+    const g = i.mb[0] && groups.find(g => g.mb === i.mb[0]); if (g) { g.dz = uniq(g.dz.concat(i.dz)); continue; }
+    groups.push({ name: a.name, mb: i.mb[0] || null, about: i.about, country: "", begin: "", type: "", dz: i.dz.slice(), it: i.it.slice(), sl: i.sl, score: 0, pic: null, fans: 0, albums: 0, genre: "", dupes: 0 }); }
   const exact = g => nn(g.name) === k;
   /* exact names Wikidata didn't link: read MusicBrainz's own links */
   for (const g of groups.filter(g => exact(g) && (!g.dz.length || !g.it.length)).slice(0, 2)) { say(`Checking ${g.name}'s pages…`); try { const u = await mbUrls(g.mb); g.dz = uniq(g.dz.concat(u.dz)); g.it = uniq(g.it.concat(u.it)); } catch {} }
   const left = [];
-  for (const a of dzA) { const g = groups.find(g => g.dz.includes(a.id)); if (g) { if (a.fans >= g.fans) { g.fans = a.fans; g.pic = a.pic || g.pic; } } else left.push(a); }
-  for (const g of groups.filter(g => exact(g) && g.dz.length && !g.fans).slice(0, 2)) { try { const a = await Deezer.artist(g.dz[0]); if (a) { g.fans = a.fans; g.pic = a.pic; } } catch {} }
+  for (const a of dzA) { const g = groups.find(g => g.dz.includes(a.id)); if (g) { if (a.fans >= g.fans) { g.fans = a.fans; g.albums = a.albums; g.pic = a.pic || g.pic; } } else left.push(a); }
+  /* linked Deezer profiles Deezer's own search didn't return (it misses Taylor Swift for "taylor"): get their followers */
+  await Promise.all(groups.filter(g => g.dz.length && !g.fans).sort((a, b) => b.sl - a.sl).slice(0, 8).map(async g => { try { const a = await Deezer.artist(g.dz[0]); if (a) { g.fans = a.fans; g.albums = a.albums; g.pic = a.pic; } } catch {} }));
   /* other Deezer profiles with exactly this name: a duplicate profile of an artist MusicBrainz knows, or someone else? */
   const anchors = groups.filter(g => exact(g)), known = uniq(anchors.flatMap(g => g.dz));
   if (anchors.length) for (const a of left.filter(a => nn(a.name) === k).slice(0, 3)) {
     say(`Checking who the “${a.name}” profile on Deezer is…`);
     let who = null; try { who = await whoOnDeezer(a.id, a.name, known); } catch {}
     const g = who && anchors.find(g => who.includes(g.mb));
-    if (g) { g.dz.push(a.id); if (g.dz.length > 1) g.dupes++; if (a.fans >= g.fans) { g.fans = a.fans; g.pic = a.pic || g.pic; } a.used = true; }
+    if (g) { g.dz.push(a.id); if (g.dz.length > 1) g.dupes++; if (a.fans >= g.fans) { g.fans = a.fans; g.albums = a.albums; g.pic = a.pic || g.pic; } a.used = true; }
   }
-  for (const a of left) if (!a.used) groups.push({ name: a.name, mb: null, about: "", dz: [a.id], it: [], fans: a.fans, pic: a.pic, score: 0, genre: "", dupes: 0 });
+  for (const a of left) if (!a.used) groups.push({ name: a.name, mb: null, about: "", dz: [a.id], it: [], sl: 0, fans: a.fans, albums: a.albums, pic: a.pic, score: 0, genre: "", dupes: 0 });
   const itLeft = [];
   for (const a of itA) { const g = groups.find(g => g.it.includes(a.id)); if (g) g.genre = g.genre || a.genre; else itLeft.push(a); }
   const dzAnchors = groups.filter(g => exact(g) && g.dz.length);
@@ -167,11 +201,11 @@ async function find(q, o = {}) {
     const g = who && who.length && dzAnchors.find(g => g.dz.some(i => who.includes(i)));
     if (g) { g.it.push(a.id); g.genre = g.genre || a.genre; a.used = true; }
   }
-  for (const a of itLeft) if (!a.used) groups.push({ name: a.name, mb: null, about: "", dz: [], it: [a.id], fans: 0, pic: null, score: 0, genre: a.genre, dupes: 0 });
-  const rank = (a, b) => b.fans - a.fans || (b.mb ? 1 : 0) - (a.mb ? 1 : 0) || (b.dz.length + b.it.length) - (a.dz.length + a.it.length) || b.score - a.score;
-  const ex = groups.filter(exact).sort(rank), near = groups.filter(g => !exact(g) && (g.fans >= 1000 || (g.mb && (g.about || g.dz.length || g.it.length)))).sort(rank);
-  const lim = o.limit || 10, nEx = Math.min(ex.length, Math.max(lim - Math.min(near.length, 4), 1));
-  const keep = ex.slice(0, nEx).concat(near.slice(0, lim - nEx));
+  itA.forEach((a, i) => { a.order = i; });
+  for (const a of itLeft) if (!a.used) groups.push({ name: a.name, mb: null, about: "", dz: [], it: [a.id], sl: 0, fans: 0, albums: 0, pic: null, score: 0, genre: a.genre, dupes: 0, itOrder: a.order });
+  const rel = relevance(q), rs = g => rel(g) + (g.mb ? .1 : 0) + (g.it.length ? .05 : 0) - (g.itOrder || 0) * .01;
+  const lim = o.limit || 10;
+  const keep = groups.filter(g => exact(g) || g.fans >= 1000 || g.sl >= 3 || (g.mb && (g.about || g.dz.length || g.it.length))).sort((a, b) => rs(b) - rs(a)).slice(0, lim);
   return { groups: keep.map(g => ({ name: g.name, about: aboutOf(g), dz: g.dz, it: g.it, mb: g.mb, pic: g.pic, fans: g.fans, genre: g.genre, dupes: g.dupes, sources: sourcesOf(g), exact: exact(g) })), failed, exact: keep.some(exact) };
 }
 const toEntry = g => store({ name: g.name, about: g.about, dz: g.dz, it: g.it, mb: g.mb, pic: g.pic });
@@ -198,7 +232,7 @@ async function complete(e0, o = {}) {
 const describe = e => { const o = entry(e); return o ? (o.plain ? "" : o.about) : ""; };
 const sourcesOfEntry = e => { const o = entry(e); return o ? sourcesOf(o) : []; };
 
-const API = { entry, store, nameOf, isLinked, same, add, banSet, banned, featNames, find, link, complete, toEntry, describe, sourcesOf: sourcesOfEntry, fmtFans, _: { whoOnDeezer, whoOnApple, wdLinks, mbUrls, mbFromDeezer } };
+const API = { entry, store, nameOf, isLinked, same, add, banSet, banned, featNames, find, link, complete, toEntry, describe, quick, sourcesOf: sourcesOfEntry, fmtFans, _: { relevance, whoOnDeezer, whoOnApple, wdItems, mbUrls, mbFromDeezer } };
 G.Artists = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

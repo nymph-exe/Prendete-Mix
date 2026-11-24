@@ -35,5 +35,10 @@ ok("adding him twice does nothing", !A.add(L, { name: "DaBaby", dz: [11363014] }
 ok("a namesake can be added separately", A.add(L, { name: "Da baby", dz: [12392348] }) && L.length === 2);
 ok("plain names are saved as plain text", A.store("  car ") === "car" && A.entry("car").plain);
 ok("feat. names split", JSON.stringify(A.featNames("Hit (feat. A, B & C)")) === JSON.stringify(["A, B & C", "A", "B", "C"]), A.featNames("Hit (feat. A, B & C)"));
+/* search order: most-followed first, whatever was typed */
+const order = (q, gs) => gs.slice().sort((a, b) => A._.relevance(q)(b) - A._.relevance(q)(a)).map(g => g.name);
+ok("“taylor”: Taylor Swift above artists named just Taylor", order("taylor", [{ name: "Taylor", fans: 4 }, { name: "Tayl'Or", fans: 133 }, { name: "Taylor Swift", fans: 13e6, albums: 40 }, { name: "James Taylor", fans: 138e3 }])[0] === "Taylor Swift");
+ok("“DaBaby”: the rapper first, a similar name below real namesakes", JSON.stringify(order("DaBaby", [{ name: "Fababy", fans: 397e3 }, { name: "Da baby", fans: 7e3 }, { name: "DaBaby", fans: 1.1e6 }])) === JSON.stringify(["DaBaby", "Da baby", "Fababy"]));
+ok("an artist without Deezer followers ranks by Wikipedia coverage", order("x", [{ name: "x a", sl: 0 }, { name: "x b", sl: 80 }])[0] === "x b");
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

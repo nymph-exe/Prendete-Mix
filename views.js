@@ -194,9 +194,8 @@ function banEditor(list, o = {}) {
     let head;
     if (failed.length >= 3) head = "Couldn't reach Deezer, MusicBrainz or Apple Music. Check your connection and try again. Nothing was added.";
     else if (!res.groups.length) head = `No artist called “${q}” on Deezer, MusicBrainz or Apple Music. Nothing was added.`;
-    else if (!ex.length) head = `No artist is called exactly “${q}”. These are the closest names. Nothing is added until you pick one.`;
-    else if (ex.length === 1) head = "Pick the artist you mean. Nothing is added until you do.";
-    else head = `${ex.length} different artists are called “${q}”. Pick the one you mean; the others stay allowed.`;
+    else if (!ex.length) head = `No artist is called exactly “${q}”. Closest names, most-followed first. Nothing is added until you pick one.`;
+    else head = "Most-followed first. Pick the artist you mean; nothing is added until you do." + (ex.length > 1 ? ` ${ex.length} different artists are called “${q}”, and the others stay allowed.` : "");
     if (failed.length && failed.length < 3) head += ` ${andList(failed)} didn't answer, so some artists may be missing.`;
     box.append(h("p", { class: "small hint", text: head }));
     const shown = more ? res.groups : res.groups.slice(0, 5);
@@ -276,7 +275,7 @@ function dirEditor(st, mode, o = {}) {
     };
     const inp = h("input", { type: "search", enterkeyhint: "search", autocomplete: "off", placeholder: "Search a song or an artist", "aria-label": "Search songs and artists", value: st._q || "" });
     const srch = async () => { const q = inp.value.trim(); st._q = q; if (!q) return; st._res = { msg: "Searching…" }; drawRes();
-      let tracks = [], artists = [], msg = ""; try { [tracks, artists] = await Promise.all([Catalog.Deezer.search(q, 15), Catalog.Deezer.artists(q, 4)]); } catch { msg = "Deezer didn't answer, so these are from Apple Music."; }
+      let tracks = [], artists = [], msg = ""; try { tracks = await Catalog.Deezer.search(q, 15); artists = await Artists.quick(q, tracks, 3); } catch { msg = "Deezer didn't answer, so these are from Apple Music."; }
       if (!tracks.length) { try { tracks = await Catalog.ITunes.search(q, 15); } catch {} }
       tracks.forEach(t => { if (!S.tr.has(t.id)) S.tmp.set(t.id, t); });
       st._res = { tracks, artists: artists.slice(0, 3), msg: !tracks.length && !artists.length ? "Nothing found. Try other words." : msg }; drawRes(); };
