@@ -309,7 +309,10 @@ const PROVIDERS = {
       const c = (j.candidates || [])[0]; return ((c && c.content && c.content.parts) || []).map(p => p.text || "").join(""); } },
   openrouter: { label: "OpenRouter (free models)", note: "Free key from OpenRouter", keyUrl: "https://openrouter.ai/keys",
     async models() { const d = await Cat.getJSON("https://openrouter.ai/api/v1/models"); return (d.data || []).filter(m => /:free$/.test(m.id)).map(m => ({ id: m.id, name: m.name || m.id, ctx: m.context_length || 0 })).sort((a, b) => b.ctx - a.ctx); },
-    rank(list) { const pref = m => (/deepseek|gemini|llama-3\.3|qwen3|gpt-oss|mistral/i.test(m.id) ? 0 : 1); return list.slice().sort((a, b) => pref(a) - pref(b) || b.ctx - a.ctx).map(m => m.id); },
+    /* bigger models know more music: known strong families first, then by size in the name (e.g. 550b), tiny models (<8B) last */
+    rank(list) { const size = m => { const n = [...m.id.matchAll(/(\d+(?:\.\d+)?)b\b/gi)].map(x => +x[1]); return n.length ? Math.max(...n) : /ultra|super|large|pro/i.test(m.id) ? 200 : /lite|mini|small|tiny|lightning/i.test(m.id) ? 6 : 30; };
+      const pref = m => (/deepseek|gemini|llama-3\.3|qwen3|gpt-oss|mistral|kimi|glm/i.test(m.id) ? 0 : 1) + (size(m) < 8 ? 2 : 0);
+      return list.slice().sort((a, b) => pref(a) - pref(b) || size(b) - size(a) || b.ctx - a.ctx).map(m => m.id); },
     pick() { return "auto"; },
     async chat(key, model, sys, user, o = {}) {
       const j = await postJSON("https://openrouter.ai/api/v1/chat/completions", { Authorization: "Bearer " + key, "HTTP-Referer": (G.location && G.location.origin) || "https://nymph-exe.github.io", "X-Title": "Préndete Mix" },
