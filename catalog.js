@@ -57,7 +57,8 @@ async function dz(path) {
 const Deezer = {
   id: "deezer", label: "Deezer",
   parse(t) {
-    const al = t.album || {}; const cs = t.contributors && t.contributors.length ? t.contributors : [t.artist].filter(Boolean);
+    const al = t.album || {}; const cs0 = t.contributors && t.contributors.length ? t.contributors : [t.artist].filter(Boolean);
+    const cs = cs0.filter((c, i) => c && cs0.findIndex(x => x && (x.id && c.id ? x.id === c.id : mnorm(x.name) === mnorm(c.name))) === i);
     const y1 = +(t.release_date || al.release_date || "").slice(0, 4) || null, y2 = Core.isrcYear(t.isrc);
     const y = y1 && y2 ? Math.min(y1, y2) : y1 || y2 || null;
     return { id: "dz:" + t.id, dz: t.id, t: t.title, a: cs.map(c => c.name).filter(Boolean).join("; "), aid: cs.map(c => c.id).filter(Boolean),
@@ -162,11 +163,14 @@ async function resolve(title, artist) {
 async function complete(t) { if (t.dz && !t.full) { try { const f = await Deezer.track(t.dz); if (f) return Object.assign(t, f, { full: true }); } catch {} } return t; }
 
 /* ---------- LRCLIB lyrics → language ---------- */
-const lrLimit = limiter(5), lrsLimit = limiter(1.2);
+/* LRCLIB is a free community service: keep a gentle pace, and when it says "slow down" (429) every lyrics request pauses */
+const lrLimit = limiter(2.5), lrsLimit = limiter(1); let lrPause = 0;
 async function lrGet(url, lim) {
   for (let i = 0; ; i++) {
+    const w = lrPause - Date.now(); if (w > 0) await sleep(w);
     try { return await lim(() => getJSON(url, {}, 12000)); }
-    catch (e) { if (e.status === 404) return null; if (i >= 3 || !(e.status === 429 || e.status >= 500 || !e.status)) throw e; await sleep(Math.max(1200, (e.retryAfter || 0) * 1000) * (i + 1)); }
+    catch (e) { if (e.status === 404) return null; if (i >= 3 || !(e.status === 429 || e.status >= 500 || !e.status)) throw e;
+      const wait = Math.max(2000, (e.retryAfter || 0) * 1000) * (i + 1); if (e.status === 429) lrPause = Math.max(lrPause, Date.now() + wait); await sleep(wait); }
   }
 }
 const LRCLIB = {

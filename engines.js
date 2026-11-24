@@ -281,6 +281,7 @@ function aiError(status, body) {
   if ((status === 400 && /api key/i.test(m)) || status === 401 || status === 403) return E("AI_KEY", "The key was refused. Check it in Settings.");
   if (status === 404 || /no longer available|not found|deprecated/i.test(m)) return E("AI_GONE", "That model isn't available on your account anymore.");
   if (status === 503 || /high demand|overloaded|unavailable/i.test(m)) return E("AI_BUSY", "That model is busy right now.");
+  if (status === 429 && /per-day|per day|daily/i.test(m)) return E("AI_DAILY", "Today's free requests for this key are used up. They reset tomorrow; Classic works in the meantime.");
   if (status === 429) return E("AI_QUOTA", "The free limit for that model is used up for now.");
   if (status === 400 && /thinking/i.test(m)) return E("AI_THINK", m);
   return E("AI_HTTP", "The AI service had a problem (" + status + ").");
@@ -288,7 +289,9 @@ function aiError(status, body) {
 async function postJSON(url, headers, body, timeout = 120000) {
   const ac = new AbortController(); const t = setTimeout(() => ac.abort(), timeout);
   try { const r = await fetch(url, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, headers), body: JSON.stringify(body), signal: ac.signal });
-    let j = null; try { j = await r.json(); } catch {} if (!r.ok) throw aiError(r.status, j); return j;
+    let j = null; try { const txt = (await r.text()).split("\n").filter(l => !/^\s*:/.test(l)).join("\n").trim(); j = txt ? JSON.parse(txt) : null; } catch {}
+    if (!r.ok) throw aiError(r.status, j);
+    if (!j) throw new Core.OpError("AI_PARSE", "That model sent an empty answer."); return j;
   } catch (e) { if (e.name === "AbortError") throw new Core.OpError("AI_TIMEOUT", "That model took too long to answer."); if (e instanceof Core.OpError) throw e; throw new Core.OpError("AI_NET", "Couldn't reach the AI service. Check your connection."); }
   finally { clearTimeout(t); }
 }
@@ -306,8 +309,10 @@ const PROVIDERS = {
       let j;
       try { j = await postJSON(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { "x-goog-api-key": key }, { systemInstruction: { parts: [{ text: sys }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: gen }, o.timeout); }
       catch (e) { if (e.code === "AI_THINK" && !o.noThink) return this.chat(key, model, sys, user, Object.assign({}, o, { noThink: true })); throw e; }
-      const c = (j.candidates || [])[0]; return ((c && c.content && c.content.parts) || []).map(p => p.text || "").join(""); } },
-  openrouter: { label: "OpenRouter (free models)", note: "Free key from OpenRouter", keyUrl: "https://openrouter.ai/keys",
+      const c = (j.candidates || [])[0]; const txt = ((c && c.content && c.content.parts) || []).map(p => p.text || "").join("");
+      if (!txt.trim()) throw new Core.OpError("AI_PARSE", "That model sent an empty answer."); return txt; } },
+  openrouter: { label: "OpenRouter (free models)", note: "Free key from OpenRouter (50 free requests a day)", keyUrl: "https://openrouter.ai/keys", noProbe: true,
+    async quota(key) { try { const d = (await Cat.getJSON("https://openrouter.ai/api/v1/key", { headers: { Authorization: "Bearer " + key } })).data || {}; const q = d.free_model_daily_requests; return q ? { used: q.used, limit: q.limit, remaining: q.remaining } : null; } catch { return null; } },
     async models() { const d = await Cat.getJSON("https://openrouter.ai/api/v1/models"); return (d.data || []).filter(m => /:free$/.test(m.id)).map(m => ({ id: m.id, name: m.name || m.id, ctx: m.context_length || 0 })).sort((a, b) => b.ctx - a.ctx); },
     /* bigger models know more music: known strong families first, then by size in the name (e.g. 550b), tiny models (<8B) last */
     rank(list) { const size = m => { const n = [...m.id.matchAll(/(\d+(?:\.\d+)?)b\b/gi)].map(x => +x[1]); return n.length ? Math.max(...n) : /ultra|super|large|pro/i.test(m.id) ? 200 : /lite|mini|small|tiny|lightning/i.test(m.id) ? 6 : 30; };
@@ -317,8 +322,9 @@ const PROVIDERS = {
     async chat(key, model, sys, user, o = {}) {
       const j = await postJSON("https://openrouter.ai/api/v1/chat/completions", { Authorization: "Bearer " + key, "HTTP-Referer": (G.location && G.location.origin) || "https://nymph-exe.github.io", "X-Title": "Préndete Mix" },
         { model, temperature: .9, messages: [{ role: "system", content: sys }, { role: "user", content: user }] }, o.timeout);
-      if (j && j.error) throw aiError(j.error.code || 0, j);
-      return ((j.choices || [])[0] || {}).message ? j.choices[0].message.content || "" : ""; } },
+      if (j.error) throw aiError(+j.error.code || 0, j);
+      const txt = ((j.choices || [])[0] || {}).message ? j.choices[0].message.content || "" : "";
+      if (!txt.trim()) throw new Core.OpError("AI_PARSE", "That model sent an empty answer."); return txt; } },
   claude: { label: "Claude (your subscription)", wip: true },
   chatgpt: { label: "ChatGPT (your subscription)", wip: true }
 };
@@ -329,6 +335,7 @@ async function workingModel(a, p, avoid = new Set(), say) {
   if (fresh) return memo.model;
   const order = p.rank(a.models || []).filter(m => !avoid.has(m) && !(memo.bad && memo.bad[m] && Date.now() - memo.bad[m] < 30 * 60e3));
   if (!order.length) throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
+  if (p.noProbe) return memo.model && !avoid.has(memo.model) ? memo.model : order[0];  // each request counts toward a daily cap: use the real request as the test
   for (let i = 0; i < order.length; i += 6) {
     say && say("Finding a model that's answering…");
     const batch = order.slice(i, i + 6);
@@ -397,11 +404,14 @@ const AI = {
     if (!p || p.wip) throw new Core.OpError("AI_WIP", "That AI connection is coming next. For now pick Gemini or OpenRouter in this playlist's settings, or switch it to Classic.");
     if (!a.key) throw new Core.OpError("AI_KEY", `Add your ${p.label} key in Settings first.`);
     const auto = !a.model || a.model === "auto"; const avoid = new Set();
-    for (let tries = 0; tries < 4; tries++) {
+    for (let tries = 0; tries < (p.noProbe ? 2 : 4); tries++) {
       const model = auto ? await workingModel(a, p, avoid, say) : a.model;
-      try { say && say(`Asking ${p.label.replace(/ \(.*\)/, "")} (${model})…`); const out = parseJSON(await p.chat(a.key, model, sys, user)); a.used = model; return out; }
+      try { say && say(`Asking ${p.label.replace(/ \(.*\)/, "")} (${model})…`); const out = parseJSON(await p.chat(a.key, model, sys, user)); a.used = model;
+        if (auto) { const memo = a.memo || (a.memo = {}); if (memo.model !== model) { Object.assign(memo, { model, at: Date.now() }); if (a.onMemo) a.onMemo(memo); } } return out; }
       catch (e) {
-        const retryable = ["AI_TIMEOUT", "AI_BUSY", "AI_GONE", "AI_QUOTA", "AI_PARSE"].includes(e.code);
+        if (typeof console !== "undefined") console.warn("[ai]", p.label, model, e.code || e.name, e.message);
+        if (e.code === "AI_DAILY") throw e;
+        const retryable = ["AI_TIMEOUT", "AI_BUSY", "AI_GONE", "AI_QUOTA", "AI_PARSE", "AI_HTTP"].includes(e.code);
         if (auto && retryable) { avoid.add(model); const memo = a.memo || (a.memo = {}); memo.bad = Object.assign(memo.bad || {}, { [model]: Date.now() }); if (memo.model === model) delete memo.model; if (a.onMemo) a.onMemo(memo); continue; }
         if (!auto && retryable) throw new Core.OpError(e.code, `${e.message} (${model}). In this playlist's settings, set the model to Automatic so the app can switch to one that's answering.`);
         throw e;
@@ -410,7 +420,7 @@ const AI = {
     throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
   },
   async interpret(ctx, text) {
-    const user = `Read this playlist description and turn it into structure. Keep the user's intent; don't add requirements they didn't state.\n\nDescription:\n"""${text}"""\n\nReturn JSON exactly like:\n{"name":"a short playlist name if the description suggests one, else empty","summary":"one or two sentences restating the musical identity, in the description's language","include":[{"title":"","artist":""}],"references":[{"title":"","artist":""}],"referenceArtists":[""],"excludeArtists":[""],"excludeSongs":[{"title":"","artist":""}],"traits":{"genres":[""],"moods":[""],"keywords":["specific styles or scenes, e.g. lofi, amapiano, corridos tumbados"],"energy":"low|medium|high or empty","tempo":"slow|mid|fast or empty","bpm":[0,0],"era":[0,0],"languages":["es","en"],"notLanguages":[],"explicit":"any|clean|explicit","versions":false,"avoidHits":false,"preferHits":false}}\n\nRules: put a song in "include" only when the user clearly asks for it to be on the playlist. Songs mentioned as examples of the sound go in "references". Songs or artists mentioned as what they don't want go in the exclude lists. An example used to explain a problem (like "X is too mellow") is not a request to add X. Use [0,0] for era and bpm when not stated. Languages are ISO 639-1 codes; "languages" are the ones wanted, "notLanguages" the ones ruled out. Moods may use: ${Object.keys(MOODS).join(', ')}.`;
+    const user = `Read this playlist description and turn it into structure. Keep the user's intent; don't add requirements they didn't state.\n\nDescription:\n"""${text}"""\n\nReturn JSON exactly like:\n{"name":"a short playlist name if the description suggests one, else empty","summary":"one or two sentences restating the musical identity, in the description's language","include":[{"title":"","artist":""}],"references":[{"title":"","artist":""}],"referenceArtists":[""],"excludeArtists":[""],"excludeSongs":[{"title":"","artist":""}],"traits":{"genres":[""],"moods":[""],"keywords":["specific styles or scenes, e.g. lofi, amapiano, corridos tumbados"],"energy":"low|medium|high or empty","tempo":"slow|mid|fast or empty","bpm":[0,0],"era":[0,0],"languages":["es","en"],"notLanguages":[],"explicit":"any|clean|explicit","versions":false,"avoidHits":false,"preferHits":false}}\n\nRules: put a song in "include" only when the user clearly asks for it to be on the playlist. Songs mentioned as examples of the sound go in "references". Songs or artists mentioned as what they don't want go in the exclude lists. An example used to explain a problem (like "X is too mellow") is not a request to add X. Use [0,0] for bpm unless the user wrote a BPM number, and [0,0] for era unless they mention years or decades; when they give only a start year, use the current year as the end. Languages are ISO 639-1 codes; "languages" are the ones wanted, "notLanguages" the ones ruled out. Moods may use: ${Object.keys(MOODS).join(', ')}.`;
     return this.ask(ctx, "You turn playlist descriptions into structured requirements. Never invent songs. Reply with JSON only.", user, ctx.say);
   },
   async generate(ctx, opt) {
@@ -468,8 +478,13 @@ async function applyReading(j, st, o = {}) {
   for (const m0 of (tr.moods || []).filter(Boolean)) { const m = Object.keys(MOODS).find(k => Core.norm(k) === Core.norm(m0)) || m0; if (!(f.moods || []).includes(m)) f.moods = [...(f.moods || []), m]; }
   for (const k of (tr.keywords || []).filter(Boolean)) if (!(f.keywords || []).includes(k)) f.keywords = [...(f.keywords || []), k];
   if (["low", "medium", "high"].includes(tr.energy)) f.energy = tr.energy;
-  if (Array.isArray(tr.bpm) && +tr.bpm[0] > 30 && +tr.bpm[1] >= +tr.bpm[0]) { f.bpm = [+tr.bpm[0], +tr.bpm[1]]; f.tempo = ""; } else if (["slow", "mid", "fast"].includes(tr.tempo)) { f.tempo = tr.tempo; f.bpm = null; }
-  if (Array.isArray(tr.era) && (+tr.era[0] > 1900 || +tr.era[1] > 1900)) f.era = [+tr.era[0] > 1900 ? +tr.era[0] : 1900, +tr.era[1] > 1900 ? +tr.era[1] : 2100];
+  /* strict filters only from what the description literally says: a BPM number, or years/decades */
+  const txt = String(o.text || d.text || ""), CUR = new Date().getFullYear();
+  const saysBpm = /\d{2,3}\s*(?:-|–|to|a)?\s*\d{0,3}\s*bpm/i.test(txt), saysYears = /\b(?:19|20)\d{2}\b|\b\d0'?s\b|\blos \d0\b|\b(?:recent|new|latest|nuev[oa]s|recientes|throwback|old school|clasicos|clásicos)\b/i.test(txt);
+  if (Array.isArray(tr.bpm) && +tr.bpm[0] > 30 && +tr.bpm[1] >= +tr.bpm[0] && (strict || saysBpm)) { f.bpm = [+tr.bpm[0], +tr.bpm[1]]; f.tempo = ""; } else if (["slow", "mid", "fast"].includes(tr.tempo)) { f.tempo = tr.tempo; f.bpm = null; }
+  if (Array.isArray(tr.era) && (+tr.era[0] > 1900 || +tr.era[1] > 1900) && (strict || saysYears)) {
+    let end = +tr.era[1] > 1900 ? +tr.era[1] : 2100; if (!strict && end < CUR && end >= CUR - 2 && !new RegExp("\\b" + end + "\\b").test(txt)) end = CUR;
+    f.era = [+tr.era[0] > 1900 ? +tr.era[0] : 1900, end]; }
   const iso = x => String(x || "").slice(0, 2).toLowerCase();
   for (const l of (tr.languages || []).map(iso).filter(l => Cat.LANG_NAMES[l])) if (!(f.langs || []).includes(l)) f.langs = [...(f.langs || []), l];
   for (const l of (tr.notLanguages || []).map(iso).filter(l => Cat.LANG_NAMES[l])) if (!(f.notLangs || []).includes(l)) f.notLangs = [...(f.notLangs || []), l];

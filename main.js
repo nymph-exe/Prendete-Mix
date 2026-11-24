@@ -119,9 +119,11 @@ function vSettings(v) {
     if (p.wip) { ai.append(h("div", { class: "prov" }, h("div", { class: "nm" }, p.label, h("span", { class: "tag y", text: "Work in progress" })), h("p", { class: "small", text: `Coming next: your own ${k === "claude" ? "Claude" : "ChatGPT"} subscription, with no API key and no extra cost, through a connector in the ${k === "claude" ? "Claude" : "ChatGPT"} app.` }))); continue; }
     const a = S.meta.ai[k] || {}; const key = h("input", { type: "password", autocomplete: "off", placeholder: a.key ? "Key saved · paste a new one to replace it" : "Paste your key", "aria-label": p.label + " key" });
     const stat = h("p", { class: "small", "aria-live": "polite", text: a.key ? `Connected. ${plural((a.models || []).length, "model")} available${a.memo && a.memo.model ? `; answering lately: ${a.memo.model}` : ""}.` : "Not set up" });
+    if (a.key && p.quota) p.quota(a.key).then(q => { if (q && document.contains(stat)) stat.textContent += ` ${q.remaining} of ${q.limit} free requests left today.`; });
     const save = async () => { const v2 = key.value.trim() || a.key; if (!v2) return toast("Paste a key first."); stat.textContent = "Checking the key…";
       try { const models = await p.models(v2); if (!models.length) throw new Core.OpError("AI", "That key works but no usable models came back.");
         S.meta.ai[k] = { key: v2, models, model: "auto", memo: {} }; await saveMeta(); stat.textContent = `Key works. Checking which of your ${models.length} models are answering…`;
+        if (p.noProbe) { const q = p.quota ? await p.quota(v2) : null; S.meta.ai[k].quota = q ? Object.assign(q, { at: Date.now() }) : null; await saveMeta(); toast(`${p.label.replace(/ \(.*\)/, "")} connected.${q ? ` ${q.remaining} of ${q.limit} free requests left today.` : ""}`, 6000); render(); return; }
         const ctx = aiCtx({ provider: k, model: "auto" }); const m = await Engines.workingModel(ctx, p); toast(`${p.label.replace(/ \(.*\)/, "")} connected. Answering now: ${m}.`, 6000); render(); }
       catch (e) { stat.textContent = e.message || "The key didn't work."; if (S.meta.ai[k] && S.meta.ai[k].key) render(); } };
     ai.append(h("div", { class: "prov" }, h("div", { class: "nm" }, p.label, a.key ? h("span", { class: "tag", text: "Connected" }) : null), h("p", { class: "small" }, p.note + " · ", h("a", { class: "lnk", href: p.keyUrl, target: "_blank", rel: "noopener noreferrer", text: "Get a key ↗" })),
@@ -227,7 +229,8 @@ async function startJob(id, kind) {
     }
   } catch (e) {
     if (!S.pls.has(id) || (e && e.code === "GONE")) return;
-    report(id, e && e.code === "STALE" ? "The playlist was reset while that was running, so its results were dropped." : (e && e.message) || "That didn't finish. Nothing else changed.", { err: true });
+    const msg = e && e.code === "STALE" ? "The playlist was reset while that was running, so its results were dropped." : e instanceof Core.OpError ? e.message : "Something unexpected went wrong. Try again.";
+    report(id, job.found && e.code !== "STALE" ? `${plural(job.found, "new recommendation")} added, then it stopped: ${msg}` : msg, { err: !job.found });
   } finally { S.jobs.delete(id); if (S.pls.has(id)) refresh(id); }
 }
 
@@ -235,10 +238,9 @@ async function startJob(id, kind) {
 async function backfillLanguages() {
   const ids = new Set(); for (const pl of S.pls.values()) for (const k in pl.rels) if (pl.rels[k].state !== "REJECTED") ids.add(k);
   const need = [...ids].map(getTrack).filter(t => t && !t.lang).slice(0, 400);
-  for (let i = 0; i < need.length; i += 10) {
-    if (document.hidden || !navigator.onLine) { await sleep(5000); i -= 10; continue; }
-    if (S.jobs.size) { await sleep(3000); i -= 10; continue; }
-    await Engines.langsFor(need.slice(i, i + 10), saveTracks, false); await sleep(1200);
+  for (let i = 0; i < need.length; i += 4) {
+    if (document.hidden || !navigator.onLine || S.jobs.size) { await sleep(5000); i -= 4; continue; }
+    await Engines.langsFor(need.slice(i, i + 4), saveTracks, false); await sleep(2500);
   }
 }
 
