@@ -203,8 +203,12 @@ const list = a => (a.length <= 1 ? a.join("") : a.slice(0, -1).join(", ") + " an
 const nice = g => String(g).replace(/\b(edm|uk|r&b|ebm|idm|mpb|dnb)\b/gi, m => m.toUpperCase()).replace(/\bk-pop\b/i, "K-pop").replace(/\bj-pop\b/i, "J-pop");
 function summarize(o) {
   const t = o.traits, s = [];
+  const names = [...(o.referenceArtists || []), ...(o.include || []), ...(o.references || []), ...(o.excludeArtists || []), ...(o.excludeSongs || [])].length;
+  const any = names || t.genres.length || (t.keywords || []).length || t.moods.length || t.energy || t.bpm || t.tempo || t.era || t.languages.length || t.notLanguages.length || (t.notStyles || []).length || t.gems || t.avoidHits || t.preferHits || t.crowd || t.explicit !== "any" || t.versions;
+  if (!any) return "Nothing in that could be used: no genre, style, mood, tempo, era, language, artist or song. Name at least one of those, or use the form below.";
   const styles = (t.keywords || []).filter(k => !t.genres.some(g => gk(g) === gk(k))).slice(0, 4);
-  const what = t.genres.length || styles.length ? list([...t.genres, ...styles.map(nice)]) : "Songs"; const mood = t.moods.length ? ` with a ${list(t.moods.map(x => x.toLowerCase()))} feel` : "";
+  const like = (o.referenceArtists || []).length ? ` like ${list(o.referenceArtists.slice(0, 4))}` : "";
+  const what = (t.genres.length || styles.length ? list([...t.genres, ...styles.map(nice)]) : "Songs") + like; const mood = t.moods.length ? ` with a ${list(t.moods.map(x => x.toLowerCase()))} feel` : "";
   s.push(`${what.charAt(0).toUpperCase() + what.slice(1)}${mood}${t.energy ? `, ${t.energy} energy` : ""}${t.bpm ? `, around ${t.bpm[0]}–${t.bpm[1]} BPM` : t.tempo ? `, ${t.tempo} tempo` : ""}.`);
   if (t.era) s.push(t.era[0] === t.era[1] ? `Released in ${t.era[0]}.` : `Released ${t.era[0]}–${t.era[1]}.`);
   if (t.languages.length) s.push(`Sung in ${list(t.languages.map(l => LN[l] || l))}.`); if (t.notLanguages.length) s.push(`Nothing in ${list(t.notLanguages.map(l => LN[l] || l))}.`);

@@ -97,7 +97,7 @@ async function undoReset(id) {
   const ok = await confirmSheet({ title: "Undo the last reset?", text: "Brings back the songs, recommendations, rejections, direction and status from just before the reset. Anything done since the reset is replaced.", ok: "Undo reset" }); if (!ok) return;
   const cur = S.pls.get(id); if (!cur) return; const j = S.jobs.get(id); if (j) j.stop = true;
   const back = clone(snap); back.epoch = cur.epoch + 1; back.updatedAt = Date.now(); back.history = cur.history.concat([{ at: Date.now(), type: "undo-reset" }]);
-  try { Core.validate(back); await DB.tx([{ store: "kv", key: "pl:" + id, value: back }, { store: "kv", key: "snap:" + id, del: true }]); S.pls.set(id, back); S.snaps.delete(id); toast("Reset undone."); render(); }
+  try { Core.validate(back); await DB.tx([{ store: "kv", key: "pl:" + id, value: back }, { store: "kv", key: "snap:" + id, del: true }]); S.pls.set(id, back); S.snaps.delete(id); announce({ t: "pl", id }); toast("Reset undone."); render(); }
   catch (e) { toast(e.message || "Couldn't undo. Nothing changed."); }
 }
 async function deletePlaylist(id) {
@@ -107,7 +107,7 @@ async function deletePlaylist(id) {
   const order = S.meta.order.filter(x => x !== id); const metaNext = Object.assign({}, S.meta, { order });
   try { await DB.tx([{ store: "kv", key: "pl:" + id, del: true }, { store: "kv", key: "snap:" + id, del: true }, { store: "kv", key: "meta", value: metaNext }]); }
   catch (e) { return toast(e.message || "Couldn't delete. Nothing changed."); }
-  S.pls.delete(id); S.snaps.delete(id); S.meta.order = order; S.reports.delete(id); toast(`Deleted “${pl.name}”.`); go("#/");
+  S.pls.delete(id); S.snaps.delete(id); S.meta.order = order; S.reports.delete(id); announce({ t: "del", id }); toast(`Deleted “${pl.name}”.`); go("#/");
 }
 
 /* ---------- global settings ---------- */
@@ -157,22 +157,38 @@ function saveBackup() {
   const data = { app: "prendete-mix", v: 3, at: Date.now(), meta, playlists: [...S.pls.values()], snaps: [...S.snaps.entries()], tracks: [...S.tr.values()].map(slimTrack) };
   download(`mixer-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data), "application/json"); toast("Backup saved.");
 }
+/* settings from outside this session (a backup, an old save): keep the right types so no screen trips on them */
+function fixMeta(m, defaults = {}) {
+  const o = Object.assign({ v: 3, order: [], never: [], country: "us", autoNext: true, ai: {}, unsorted: [] }, defaults, m && typeof m === "object" && !Array.isArray(m) ? m : {});
+  o.order = Array.isArray(o.order) ? o.order.filter(x => typeof x === "string") : [];
+  o.never = Array.isArray(o.never) ? o.never : typeof o.never === "string" ? [o.never] : [];
+  o.never = o.never.filter(e => (typeof e === "string" && e.trim()) || (e && typeof e === "object" && typeof e.name === "string" && e.name.trim()));
+  if (typeof o.country !== "string" || !/^[a-z]{2}$/.test(o.country)) o.country = "us";
+  o.autoNext = o.autoNext !== false && o.autoNext !== "false";
+  if (!o.ai || typeof o.ai !== "object" || Array.isArray(o.ai)) o.ai = {};
+  o.unsorted = Array.isArray(o.unsorted) ? o.unsorted.filter(x => typeof x === "string") : [];
+  return o;
+}
 async function restoreBackup(file) {
   let data; try { data = JSON.parse(await file.text()); } catch { return toast("That file isn't a backup from this app."); }
   if (!data || data.app !== "prendete-mix" || !Array.isArray(data.playlists)) return toast("That file isn't a backup from this app.");
-  try { data.playlists.forEach(Core.validate); } catch (e) { return toast("The backup is damaged (" + e.message + "). Nothing changed."); }
-  const ok = await confirmSheet({ title: "Restore this backup?", text: `Replaces everything in this browser with the backup from ${new Date(data.at).toLocaleString()}: ${plural(data.playlists.length, "playlist")}. Your AI keys stay.`, ok: "Replace with backup" }); if (!ok) return;
+  try { data.playlists.forEach(Core.checkShape); } catch (e) { return toast(`The backup is damaged: ${e.code === "SHAPE" ? e.message : String(e.message || e).replace(/\.$/, "").toLowerCase()}. Nothing changed.`); }
+  if (new Set(data.playlists.map(p => p.id)).size !== data.playlists.length) return toast("The backup is damaged: two playlists in it share an ID. Nothing changed.");
+  const when = Number.isFinite(new Date(data.at).getTime()) ? new Date(data.at).toLocaleString() : "an unknown date";
+  const ok = await confirmSheet({ title: "Restore this backup?", text: `Replaces everything in this browser with the backup from ${when}: ${plural(data.playlists.length, "playlist")}. Your AI keys stay.`, ok: "Replace with backup" }); if (!ok) return;
   for (const j of S.jobs.values()) j.stop = true;
-  const meta = Object.assign({}, data.meta || {}, { ai: S.meta.ai, order: data.playlists.map(p => p.id), bansV2: 1 });
+  data.tracks = (Array.isArray(data.tracks) ? data.tracks : []).map(Core.checkTrack).filter(Boolean);
+  data.snaps = (Array.isArray(data.snaps) ? data.snaps : []).filter(x => Array.isArray(x) && typeof x[0] === "string" && data.playlists.some(p => p.id === x[0])).filter(([, v]) => { try { Core.checkShape(v); return true; } catch { return false; } });
+  const meta = Object.assign(fixMeta(data.meta), { ai: S.meta.ai, order: data.playlists.map(p => p.id), bansV2: 1 });
   const ops = [...S.pls.keys()].map(k => ({ store: "kv", key: "pl:" + k, del: true })).concat([...S.snaps.keys()].map(k => ({ store: "kv", key: "snap:" + k, del: true })),
-    data.playlists.map(p => ({ store: "kv", key: "pl:" + p.id, value: p })), (data.snaps || []).map(([k, v]) => ({ store: "kv", key: "snap:" + k, value: v })), (data.tracks || []).filter(t => t && t.id).map(t => ({ store: "tracks", value: t })), [{ store: "kv", key: "meta", value: meta }]);
+    data.playlists.map(p => ({ store: "kv", key: "pl:" + p.id, value: p })), data.snaps.map(([k, v]) => ({ store: "kv", key: "snap:" + k, value: v })), data.tracks.map(t => ({ store: "tracks", value: t })), [{ store: "kv", key: "meta", value: meta }]);
   try { await DB.tx(ops); } catch (e) { return toast(e.message || "Couldn't restore. Nothing changed."); }
-  toast("Backup restored."); setTimeout(() => { location.hash = "#/"; location.reload(); }, 600);
+  announce({ t: "reload" }); toast("Backup restored."); setTimeout(() => { location.hash = "#/"; location.reload(); }, 600);
 }
 async function eraseAll() {
   const ok = await confirmSheet({ title: "Erase everything?", text: "Deletes all playlists, decisions and AI keys in this browser. Save a backup first if you might want them.", ok: "Erase everything" }); if (!ok) return;
-  for (const j of S.jobs.values()) j.stop = true;
-  try { if (DB.mode === "idb") await new Promise(r => { const q = indexedDB.deleteDatabase("prendete-mix"); q.onsuccess = q.onerror = q.onblocked = () => r(); }); Object.keys(localStorage).filter(k => k.startsWith("pmx:")).forEach(k => localStorage.removeItem(k)); } catch {}
+  for (const j of S.jobs.values()) j.stop = true; announce({ t: "reload" });
+  try { if (DB.mode === "idb") { DB.close(); await new Promise(r => { const q = indexedDB.deleteDatabase("prendete-mix"); q.onsuccess = q.onerror = () => r(); setTimeout(r, 4000); }); } Object.keys(localStorage).filter(k => k.startsWith("pmx:")).forEach(k => localStorage.removeItem(k)); } catch {}
   location.hash = "#/"; location.reload();
 }
 
@@ -188,7 +204,8 @@ function engineFor(pl) {
 const targetFor = pl => Math.min(40, Math.max(20, Core.counts(pl).available + 10));
 function report(id, text, o = {}) {
   S.reports.set(id, Object.assign({ text }, o)); const pl = S.pls.get(id);
-  if (S.route.v === "pl" && S.route.id === id) render(); else if (pl) toast(`${pl.name}: ${text}`, 6000);
+  /* while you're typing on that screen the note waits for the next re-draw; a toast says it now */
+  if (S.route.v === "pl" && S.route.id === id && !typing()) render(); else if (pl) toast(`${pl.name}: ${text}`, 6000);
 }
 async function startJob(id, kind) {
   const pl = S.pls.get(id); if (!pl) return; if (S.jobs.has(id)) return toast("Already working on this playlist.");
@@ -240,14 +257,14 @@ async function startJob(id, kind) {
    plain (exact full-name match only) and the editor offers "Choose the artist". */
 async function upgradeBans() {
   const key = e => Core.norm(Artists.nameOf(e)).replace(/\s+/g, "");
-  if (!S.meta.bansV2) { S.meta.never = (S.meta.never || []).filter(e => key(e) === "dababy"); S.meta.bansV2 = 1; await saveMeta().catch(() => {}); if (S.route && S.route.v === "settings") render(); }
+  if (!S.meta.bansV2) { const keep = S.meta.never.filter(e => key(e) === "dababy"); S.meta.never.splice(0, S.meta.never.length, ...keep); S.meta.bansV2 = 1; await saveMeta().catch(() => {}); if (S.route && S.route.v === "settings" && !typing()) render(); }
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
   const tried = new Map(); const linkOf = async n => { const k = key(n); if (!tried.has(k)) tried.set(k, await Artists.link(Artists.nameOf(n)).catch(() => null)); return tried.get(k); };
   for (const n of (S.meta.never || []).filter(e => !Artists.isLinked(e))) { const e = await linkOf(n); if (!e) continue; const i = S.meta.never.indexOf(n); if (i >= 0) { S.meta.never[i] = e; await saveMeta().catch(() => {}); } }
   for (const id of [...S.pls.keys()]) { const p = S.pls.get(id); const L = (p && p.direction && p.direction.exclude && p.direction.exclude.artists) || [];
     for (const n of L.filter(e => !Artists.isLinked(e))) { const e = await linkOf(n); if (!e) continue;
       await mutate(id, q => { const M = q.direction.exclude.artists; const i = M.findIndex(x => x === n); if (i >= 0) M[i] = e; }, { quiet: true }).catch(() => {}); } }
-  if (S.route && S.route.v === "settings") render();
+  if (S.route && S.route.v === "settings" && !typing()) render();
 }
 async function backfillLanguages() {
   const ids = new Set(); for (const pl of S.pls.values()) for (const k in pl.rels) if (pl.rels[k].state !== "REJECTED") ids.add(k);
@@ -270,25 +287,55 @@ async function firstRun() {
   await DB.tx(ops);
   S.meta = meta; out.playlists.forEach(p => S.pls.set(p.id, p)); out.tracks.forEach(t => S.tr.set(t.id, t)); S.hasLegacy = !!legacy;
 }
+/* changes saved in another tab of the app: load them here. Screens re-draw unless you're typing in one. */
+function typing() { const a = document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && !!a.closest("#view, .sheet"); }
+async function heard(m) {
+  if (!m || !S.meta) return;
+  if (m.t === "reload") return setTimeout(() => location.reload(), 800);
+  if (m.t === "meta") { const r = await DB.get("kv", "meta"); if (!r.found || !r.value) return; const fresh = fixMeta(r.value);
+    for (const k of Object.keys(fresh)) { if (Array.isArray(S.meta[k]) && Array.isArray(fresh[k])) S.meta[k].splice(0, S.meta[k].length, ...fresh[k]); else S.meta[k] = fresh[k]; }
+    S.meta.order = S.meta.order.filter(id => S.pls.has(id)); Catalog.SETTINGS.country = S.meta.country;
+    if ((S.route.v === "settings" || S.route.v === "home") && !typing()) render(); return; }
+  if (m.t === "del") { S.pls.delete(m.id); S.meta.order = S.meta.order.filter(x => x !== m.id); if ((S.route.v === "home" || (S.route.v === "pl" && S.route.id === m.id)) && !typing()) render(); return; }
+  if (m.t === "pl") { const r = await DB.get("kv", "pl:" + m.id); if (!r.found || !r.value) return; let pl; try { pl = Core.checkShape(r.value); } catch { return; }
+    const missing = Object.keys(pl.rels).filter(x => !S.tr.has(x));
+    for (const x of missing) { const t = await DB.get("tracks", x); const ok = t.found && Core.checkTrack(t.value); if (ok) S.tr.set(ok.id, ok); }
+    S.pls.set(m.id, pl); if (!S.meta.order.includes(m.id)) S.meta.order.unshift(m.id);
+    if (!typing()) refresh(m.id); }
+}
+if (BC) BC.onmessage = e => { heard(e.data).catch(() => {}); };
+/* anything that slips past the app's own error handling still gets said, not swallowed (at most once every 10 s);
+   an interrupted or blocked sample isn't an error */
+let lastOops = 0;
+function oops(e) {
+  if (e && /^(AbortError|NotAllowedError|NotSupportedError)$/.test(e.name || "")) return;
+  if (typeof console !== "undefined") console.error("[mixer]", e);
+  if (Date.now() - lastOops < 10000 || !document.querySelector("#toast")) return; lastOops = Date.now();
+  toast(e instanceof Core.OpError ? e.message : "Something went wrong there. Try again; your playlists are saved.", 6000);
+}
+window.addEventListener("unhandledrejection", e => oops(e.reason));
+window.addEventListener("error", e => { if (e.error) oops(e.error); });
 async function boot() {
   initPlayer(); $("#gear").innerHTML = I("gear"); $("#gear").onclick = () => go("#/settings"); $("#back").innerHTML = I("back");
   $("#view").replaceChildren(h("main", { class: "wrap" }, h("p", { class: "empty", text: "Loading your playlists…" })));
   await DB.open();
   try {
     const [kv, tr] = await Promise.all([DB.all("kv"), DB.all("tracks")]);
-    for (const [k, v] of kv) { if (k === "meta") S.meta = v; else if (k.startsWith("pl:")) S.pls.set(v.id, v); else if (k.startsWith("snap:")) S.snaps.set(k.slice(5), v); else if (k === "legacy-backup") S.hasLegacy = true; }
-    for (const [, t] of tr) S.tr.set(t.id, t);
+    /* a damaged saved record is skipped (and left in storage) instead of stopping the whole app */
+    for (const [k, v] of kv) { try { if (k === "meta") S.meta = v; else if (k.startsWith("pl:")) { Core.checkShape(v); if (v.id !== k.slice(3)) throw new Error("key"); S.pls.set(v.id, v); } else if (k.startsWith("snap:")) S.snaps.set(k.slice(5), Core.checkShape(v)); else if (k === "legacy-backup") S.hasLegacy = true; } catch { if (k.startsWith("pl:")) S.damaged = (S.damaged || 0) + 1; } }
+    for (const [, t] of tr) { const ok = Core.checkTrack(t); if (ok) S.tr.set(ok.id, ok); }
     if (!S.meta) await firstRun();
   } catch (e) {
     $("#view").replaceChildren(h("main", { class: "wrap" }, h("div", { class: "note err", text: "Couldn't set up the app: " + (e.message || e) + ". Check your connection and try again." }), btn("Try again", "red", () => location.reload())));
     return;
   }
-  S.meta = Object.assign({ v: 3, order: [], never: ["DaBaby"], country: "us", autoNext: true, ai: {}, unsorted: [] }, S.meta); S.meta.ai = S.meta.ai || {};
+  S.meta = fixMeta(S.meta, { never: ["DaBaby"] });
   S.meta.order = S.meta.order.filter(id => S.pls.has(id)).concat([...S.pls.keys()].filter(id => !S.meta.order.includes(id)));
   Catalog.SETTINGS.country = S.meta.country;
   S.route = parseRoute(); render(true);
   setTimeout(backfillLanguages, 4000);
   setTimeout(() => upgradeBans().catch(() => {}), 2500);
   if (DB.mode === "ls") toast("This browser blocks the app's database, so it's using simpler storage with less room. Save backups often.", 7000);
+  else if (S.damaged) toast(`${plural(S.damaged, "saved playlist")} ${S.damaged === 1 ? "was" : "were"} damaged and couldn't be opened. ${S.damaged === 1 ? "It stays" : "They stay"} stored; the rest work normally.`, 8000);
 }
 boot();

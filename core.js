@@ -214,6 +214,39 @@ function validate(pl) {
   return true;
 }
 
+/* ---------- shape check for data from outside this session (a backup file, a damaged saved record) ----------
+   Repairs what can be repaired without guessing (empty history, missing direction) and refuses the rest
+   with a plain reason. Then the usual invariants. */
+const isObj = x => !!x && typeof x === "object" && !Array.isArray(x);
+const strs = x => (Array.isArray(x) ? x.filter(v => typeof v === "string" && v) : []);
+function checkShape(pl) {
+  const bad = m => { throw new OpError("SHAPE", m); };
+  if (!isObj(pl)) bad("a playlist entry is empty");
+  if (typeof pl.id !== "string" || !pl.id) bad("a playlist has no ID");
+  if (typeof pl.name !== "string" || !pl.name.trim()) bad(`playlist ${pl.id} has no name`);
+  const nm = `“${pl.name.slice(0, 40)}”`;
+  if (!isObj(pl.rels)) bad(`${nm} is missing its songs`);
+  for (const k in pl.rels) if (!isObj(pl.rels[k])) bad(`${nm} has a damaged song entry`);
+  if (!Array.isArray(pl.order) || pl.order.some(x => typeof x !== "string")) bad(`${nm} has a damaged song order`);
+  if (!Number.isFinite(pl.capacity) || pl.capacity < 1) bad(`${nm} has no capacity`);
+  if (!Array.isArray(pl.history)) pl.history = []; else pl.history = pl.history.filter(isObj);
+  if (!Array.isArray(pl.batches)) pl.batches = []; else pl.batches = pl.batches.filter(isObj);
+  if (!isObj(pl.engine) || (pl.engine.mode !== "ai" && pl.engine.mode !== "classic")) pl.engine = { mode: "classic" };
+  if (!Number.isFinite(pl.epoch)) pl.epoch = 1;
+  if (pl.artwork != null && !(typeof pl.artwork === "string" && /^(data:image\/(png|jpe?g|webp|gif);|https:\/\/)/.test(pl.artwork))) pl.artwork = null;
+  const d = isObj(pl.direction) ? pl.direction : (pl.direction = {});
+  if (typeof d.text !== "string") d.text = ""; d.refs = strs(d.refs);
+  d.artists = Array.isArray(d.artists) ? d.artists.filter(a => isObj(a) && typeof a.name === "string") : [];
+  d.exclude = isObj(d.exclude) ? d.exclude : {}; d.exclude.songs = strs(d.exclude.songs);
+  d.exclude.artists = Array.isArray(d.exclude.artists) ? d.exclude.artists.filter(e => (typeof e === "string" && e.trim()) || (isObj(e) && typeof e.name === "string")) : [];
+  if (!isObj(d.form)) d.form = {};
+  for (const k of ["genres", "moods", "keywords", "notStyles", "langs", "notLangs"]) if (d.form[k] != null && !Array.isArray(d.form[k])) delete d.form[k];
+  if (!Number.isFinite(pl.createdAt)) pl.createdAt = Date.now(); if (!Number.isFinite(pl.updatedAt)) pl.updatedAt = pl.createdAt;
+  validate(pl); return pl;
+}
+/* a saved song must at least have an ID and a title */
+function checkTrack(t) { if (!isObj(t) || typeof t.id !== "string" || !t.id || typeof t.t !== "string") return null; if (typeof t.a !== "string") t.a = String(t.a == null ? "" : t.a); if (!Array.isArray(t.aid)) t.aid = []; return t; }
+
 /* ---------- evidence for engines (Section 16.3) ---------- */
 function evidence(pl, getTrack) {
   const e = { manual: [], delegated: [], rejected: [], pending: [], mandatory: [] };
@@ -222,7 +255,7 @@ function evidence(pl, getTrack) {
   return e;
 }
 
-const API = { CONFIG, capacityOptions, S, ORIGIN, MANUAL_ORIGINS, REASONS, OpError, uid, norm, firstArtist, versionTags, baseTitle, explicitClass, sameRecording, isrcYear,
+const API = { checkShape, checkTrack, CONFIG, capacityOptions, S, ORIGIN, MANUAL_ORIGINS, REASONS, OpError, uid, norm, firstArtist, versionTags, baseTitle, explicitClass, sameRecording, isrcYear,
   createPlaylist, counts, stateOf, idsIn, findDuplicate, addMandatory, approve, reject, restore, confirmKeep, appendCandidates, fillCommit, setCapacity, setStatus, reorder, editDirection, validate, evidence, log };
 G.Core = API;
 if (typeof module !== "undefined") module.exports = API;

@@ -5,7 +5,9 @@ function parseRoute() {
   const p = location.hash.replace(/^#\/?/, "").split("/");
   if (p[0] === "new") return { v: "new" };
   if (p[0] === "settings") return { v: "settings" };
-  if (p[0] === "p" && p[1]) return { v: "pl", id: decodeURIComponent(p[1]), tab: ["playlist", "recs", "rejected", "settings"].includes(p[2]) ? p[2] : "playlist" };
+  /* a mangled link (half an escape like %E0%A4%A) shouldn't stop the app: treat it as a playlist that isn't there */
+  const dec = x => { try { return decodeURIComponent(x); } catch { return x; } };
+  if (p[0] === "p" && p[1]) return { v: "pl", id: dec(p[1]), tab: ["playlist", "recs", "rejected", "settings"].includes(p[2]) ? p[2] : "playlist" };
   return { v: "home" };
 }
 const routeKey = r => r.v + (r.id ? ":" + r.id + ":" + r.tab : "");
@@ -190,9 +192,10 @@ function banEditor(list, o = {}) {
     box.append(h("div", { class: "inl" }, inp, btn(busy ? "Looking…" : "Find", "ghost sm", go, busy ? { disabled: true } : undefined)));
     st.textContent = busy ? st.textContent : msg; box.append(st);
     if (!res) return;
-    const ex = res.groups.filter(g => g.exact), q = res.q, failed = res.failed || [];
+    /* Wikidata only links artists across services; what matters to say is which of the three searches failed */
+    const ex = res.groups.filter(g => g.exact), q = res.q, failed = (res.failed || []).filter(x => x !== "Wikidata");
     let head;
-    if (failed.length >= 3) head = "Couldn't reach Deezer, MusicBrainz or Apple Music. Check your connection and try again. Nothing was added.";
+    if (failed.length >= 3 && !res.groups.length) head = "Couldn't reach Deezer, MusicBrainz or Apple Music. Check your connection and try again. Nothing was added.";
     else if (!res.groups.length) head = `No artist called “${q}” on Deezer, MusicBrainz or Apple Music. Nothing was added.`;
     else if (!ex.length) head = `No artist is called exactly “${q}”. Closest names, most-followed first. Nothing is added until you pick one.`;
     else head = "Most-followed first. Pick the artist you mean; nothing is added until you do." + (ex.length > 1 ? ` ${ex.length} different artists are called “${q}”, and the others stay allowed.` : "");
@@ -268,17 +271,19 @@ function dirEditor(st, mode, o = {}) {
               exBox.redraw(); drawRes(); }))))); });
       Q["search"] = (r.tracks || []).map(t => t.id);
       (r.tracks || []).forEach(t => { const cur = d.refs.includes(t.id) ? "ref" : st.must.includes(t.id) || (st.mustLocked || []).includes(t.id) ? "must" : d.exclude.songs.includes(t.id) ? "ex" : "";
-        const set = k => async () => { drop(t.id); if (k !== cur) { if (k !== "ex") { const full = await Catalog.complete(t); S.tmp.set(full.id, full); } (k === "ref" ? d.refs : k === "must" ? st.must : d.exclude.songs).push(t.id); } drawPicks(); drawRes(); };
+        const set = k => async () => { drop(t.id); if (k !== cur) { if (k !== "ex") { try { const full = await Catalog.complete(t); S.tmp.set(full.id, full); } catch { /* the song is usable as is; its details fill in later */ } } (k === "ref" ? d.refs : k === "must" ? st.must : d.exclude.songs).push(t.id); } drawPicks(); drawRes(); };
         const cv = h("button", { class: "cov", type: "button", "aria-label": "Play sample of " + t.t, onclick: () => togglePlay(t, "search") }, coverEl(t));
         res.append(h("div", { class: "res", "data-k": t.id }, cv, h("div", {}, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: artistsOf(t.a) + (t.exp ? ` · ${t.exp === "explicit" ? "Explicit" : "Clean"}` : "") }),
           h("div", { class: "pick" }, btn(cur === "ref" ? "✓ Sounds like" : "Sounds like", cur === "ref" ? "" : "ghost", set("ref")), btn(cur === "must" ? "✓ Must include" : "Must include", cur === "must" ? "" : "ghost", set("must")), btn(cur === "ex" ? "✓ Never include" : "Never include", cur === "ex" ? "" : "ghost", set("ex")))))); });
     };
     const inp = h("input", { type: "search", enterkeyhint: "search", autocomplete: "off", placeholder: "Search a song or an artist", "aria-label": "Search songs and artists", value: st._q || "" });
     const srch = async () => { const q = inp.value.trim(); st._q = q; if (!q) return; st._res = { msg: "Searching…" }; drawRes();
-      let tracks = [], artists = [], msg = ""; try { tracks = await Catalog.Deezer.search(q, 15); artists = await Artists.quick(q, tracks, 3); } catch { msg = "Deezer didn't answer, so these are from Apple Music."; }
-      if (!tracks.length) { try { tracks = await Catalog.ITunes.search(q, 15); } catch {} }
+      let tracks = [], artists = [], msg = "", dzDown = false; try { tracks = await Catalog.Deezer.search(q, 15); } catch { dzDown = true; }
+      try { artists = await Artists.quick(q, tracks, 3); } catch {}
+      if (!tracks.length) { try { const it = await Catalog.ITunes.search(q, 15); if (it.length && dzDown) msg = "Deezer didn't answer, so these songs are from Apple Music."; tracks = it; } catch {} }
+      if (!tracks.length && !artists.length && dzDown) msg = "Couldn't reach Deezer or Apple Music. Check your connection and try again.";
       tracks.forEach(t => { if (!S.tr.has(t.id)) S.tmp.set(t.id, t); });
-      st._res = { tracks, artists: artists.slice(0, 3), msg: !tracks.length && !artists.length ? "Nothing found. Try other words." : msg }; drawRes(); };
+      st._res = { tracks, artists: artists.slice(0, 3), msg: msg || (!tracks.length && !artists.length ? "Nothing found. Try other words." : "") }; drawRes(); };
     root.append(h("form", { class: "field", role: "search", onsubmit: e => { e.preventDefault(); srch(); } }, h("label", { text: mode === "A" ? "Find artists and songs" : "Add songs or artists" }), h("div", { class: "inl" }, inp, btn("Search", "", null, { type: "submit", ic: "search" }))), res, picks);
     const det = h("details", { class: "more" }, h("summary", { text: mode === "A" ? "Genres, mood, rhythm, years and languages (optional)" : "Genres, mood, rhythm, years and languages" }), formEditor(d.form), exBox);
     if (mode !== "A" || st._read) det.open = true; root.append(det);
@@ -329,7 +334,7 @@ async function createFromDraft(D) {
     Core.addMandatory(pl, st.must, getTrack); Core.validate(pl);
     const order = [pl.id, ...S.meta.order]; const metaNext = Object.assign({}, S.meta, { order });
     await DB.tx([{ store: "kv", key: "pl:" + pl.id, value: pl }, { store: "kv", key: "meta", value: metaNext }, ...tracks.map(t => ({ store: "tracks", value: slimTrack(t) }))]);
-    tracks.forEach(t => { S.tr.set(t.id, t); S.tmp.delete(t.id); }); S.pls.set(pl.id, pl); S.meta.order = order; S.create = null;
+    tracks.forEach(t => { S.tr.set(t.id, t); S.tmp.delete(t.id); }); S.pls.set(pl.id, pl); S.meta.order = order; S.create = null; announce({ t: "pl", id: pl.id }); announce({ t: "meta" });
     go("#/p/" + encodeURIComponent(pl.id) + "/recs"); startJob(pl.id, "initial");
   } catch (e) { D.busy = false; D.msg = e.message || "Couldn't create it. Nothing was saved."; render(); }
 }

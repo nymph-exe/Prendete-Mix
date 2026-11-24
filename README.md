@@ -28,5 +28,6 @@ Each playlist has its own direction, capacity, recommendations, rejections and s
 | `tests/core.test.js` | `node tests/core.test.js` checks the rules against the ruleset's acceptance tests |
 | `tests/reader.test.js` | `node tests/reader.test.js` checks the description reader |
 | `tests/style.test.js` | `node tests/style.test.js` checks Classic's genre matching |
+| `tests/robust.test.js` | `node tests/robust.test.js` checks junk input, damaged backups and old data, untrusted AI answers, and random operation sequences |
 | `tests/ban.test.js` | `node tests/ban.test.js` checks "Never suggest" matching: IDs decide, namesakes and partial names stay allowed |
 | `tests/listen.test.js` | `npm install meyda && node tests/listen.test.js` checks the preview analyzer |

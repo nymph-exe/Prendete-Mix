@@ -21,7 +21,20 @@ function prendeteDirection(refs) {
 }
 const capFor = n => Core.capacityOptions().find(c => c >= n) || Core.CONFIG.maxConfirmed;
 
+/* the old app's saved data may be partly damaged: keep the parts that have the expected shape, and treat it
+   as absent when no usable song is left (so Préndete still comes from the seed instead of an empty list) */
+const obj = x => !!x && typeof x === "object" && !Array.isArray(x);
+function cleanLegacy(l) {
+  if (!obj(l) || !obj(l.songs)) return null;
+  const songs = {};
+  for (const [k0, s] of Object.entries(l.songs)) { if (!obj(s)) continue; const k = typeof s.k === "string" && s.k ? s.k : k0; if (typeof s.t !== "string" || !s.t.trim()) continue;
+    songs[k] = Object.assign({}, s, { k, a: typeof s.a === "string" ? s.a : String(s.a == null ? "" : s.a), o: Number.isFinite(+s.o) && s.o !== null && s.o !== "" ? +s.o : null, aid: Array.isArray(s.aid) ? s.aid : [] }); }
+  if (!Object.keys(songs).length) return null;
+  const lists = (Array.isArray(l.lists) ? l.lists : []).filter(obj).map(x => ({ name: typeof x.name === "string" && x.name.trim() ? x.name.slice(0, 100) : "Playlist", created: Number.isFinite(x.created) ? x.created : null, songs: Array.isArray(x.songs) ? x.songs.filter(id => typeof id === "string") : [] }));
+  return { songs, lists, ov: obj(l.ov) ? l.ov : {}, ts: obj(l.ts) ? l.ts : {}, reconf: { picks: obj(l.reconf) && Array.isArray(l.reconf.picks) ? l.reconf.picks : [] }, prefs: obj(l.prefs) ? l.prefs : null };
+}
 function build(seed, legacy, now = Date.now()) {
+  legacy = cleanLegacy(legacy);
   const tracks = new Map(); const get = id => tracks.get(id);
   const put = t => { if (!t || !t.id) return null; const old = tracks.get(t.id); tracks.set(t.id, old ? Object.assign({}, t, old, { prev: t.prev || old.prev }) : t); return t.id; };
   seed.approved.forEach(m => put(seedTrack(m))); seed.rejected.forEach(m => put(seedTrack(m)));
@@ -65,7 +78,7 @@ function build(seed, legacy, now = Date.now()) {
   report.unsorted = unsorted.length;
   playlists.forEach(Core.validate);
   const used = new Set(playlists.flatMap(p => Object.keys(p.rels)).concat(unsorted));
-  return { playlists, tracks: [...tracks.values()].filter(t => used.has(t.id)), unsorted, never: ["DaBaby"], prefs: legacy && legacy.prefs ? { country: legacy.prefs.itc || "us", autoNext: legacy.prefs.auto !== false } : {}, report };
+  return { playlists, tracks: [...tracks.values()].filter(t => used.has(t.id)), unsorted, never: ["DaBaby"], prefs: legacy && legacy.prefs ? { country: typeof legacy.prefs.itc === "string" && /^[a-z]{2}$/.test(legacy.prefs.itc) ? legacy.prefs.itc : "us", autoNext: legacy.prefs.auto !== false } : {}, report };
 }
 const API = { build, seedTrack, legacyTrack, prendeteDirection, PRENDETE_TEXT, capFor };
 G.Migrate = API;

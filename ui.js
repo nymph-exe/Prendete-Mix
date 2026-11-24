@@ -54,7 +54,7 @@ const DB = (() => {
       if (!("indexedDB" in window)) { mode = "ls"; return res(); }
       let req; try { req = indexedDB.open("prendete-mix", 1); } catch { mode = "ls"; return res(); }
       req.onupgradeneeded = () => { const d = req.result; if (!d.objectStoreNames.contains("kv")) d.createObjectStore("kv"); if (!d.objectStoreNames.contains("tracks")) d.createObjectStore("tracks", { keyPath: "id" }); };
-      req.onsuccess = () => { db = req.result; res(); }; req.onerror = () => { mode = "ls"; res(); }; req.onblocked = () => { mode = "ls"; res(); };
+      req.onsuccess = () => { db = req.result; db.onversionchange = () => { db.close(); db = null; }; res(); }; req.onerror = () => { mode = "ls"; res(); }; req.onblocked = () => { mode = "ls"; res(); };
     });
   }
   function all(store) {
@@ -66,31 +66,45 @@ const DB = (() => {
     if (!ops.length) return Promise.resolve();
     if (mode === "ls") { try { for (const o of ops) { const k = LP + o.store + ":" + (o.key != null ? o.key : o.value.id); if (o.del) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(o.value)); } return Promise.resolve(); } catch (e) { return Promise.reject(new Core.OpError("SAVE", "This browser is out of space, so the change wasn't saved. Save a backup in Settings and free some space.")); } }
     return new Promise((res, rej) => {
-      let t; try { t = db.transaction(["kv", "tracks"], "readwrite"); } catch (e) { return rej(new Core.OpError("SAVE", "Couldn't save. Reload the page and try again.")); }
+      let t; try { if (!db) throw new Error("closed"); t = db.transaction(["kv", "tracks"], "readwrite"); } catch (e) { return rej(new Core.OpError("SAVE", "Couldn't save. Reload the page and try again.")); }
       for (const o of ops) { const st = t.objectStore(o.store); if (o.del) st.delete(o.key); else if (o.store === "tracks") st.put(o.value); else st.put(o.value, o.key); }
       t.oncomplete = () => res(); t.onerror = () => rej(new Core.OpError("SAVE", "Couldn't save the change" + (t.error && /quota/i.test(t.error.name) ? ": this browser is out of space." : ". Try again."))); t.onabort = t.onerror;
     });
   }
-  return { open, all, tx, get mode() { return mode; } };
+  /* one record: { found, value }; a read that fails counts as "not known" rather than "deleted" */
+  function get(store, key) {
+    if (mode === "ls") { try { const v = localStorage.getItem(LP + store + ":" + key); return Promise.resolve(v == null ? { found: false } : { found: true, value: JSON.parse(v) }); } catch { return Promise.resolve({ found: true, value: undefined, failed: true }); } }
+    return new Promise(res => { try { if (!db) return res({ found: true, failed: true }); const rq = db.transaction(store, "readonly").objectStore(store).get(key); rq.onsuccess = () => res(rq.result === undefined ? { found: false } : { found: true, value: rq.result }); rq.onerror = () => res({ found: true, failed: true }); } catch { res({ found: true, failed: true }); } });
+  }
+  /* the open connection has to be closed or deleting the database waits forever */
+  function close() { if (db) { try { db.close(); } catch {} db = null; } }
+  return { open, all, get, tx, close, get mode() { return mode; } };
 })();
 
 /* ---------- state ---------- */
 const S = { meta: null, pls: new Map(), tr: new Map(), tmp: new Map(), jobs: new Map(), reports: new Map(), genres: null, route: { v: "home" }, ui: { view: {}, sel: new Map(), sort: {}, card: {}, scroll: {} } };
 const getTrack = id => S.tr.get(id) || S.tmp.get(id) || null;
 function slimTrack(t) { const c = Object.assign({}, t); delete c._why; return c; }
-function saveMeta() { return DB.tx([{ store: "kv", key: "meta", value: S.meta }]); }
+/* other open tabs of the app hear about every saved change, so a stale tab can't overwrite a newer one */
+const BC = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("mixer") : null;
+function announce(m) { try { if (BC) BC.postMessage(m); } catch {} }
+function saveMeta() { return DB.tx([{ store: "kv", key: "meta", value: S.meta }]).then(r => { announce({ t: "meta" }); return r; }); }
 function saveTracks(list) { list.forEach(t => S.tr.set(t.id, t)); DB.tx(list.map(t => ({ store: "tracks", value: slimTrack(t) }))).catch(() => {}); }
 /* Every playlist change goes through mutate(): clone → apply → validate invariants → persist atomically → swap in.
    A failed save leaves the previous state untouched (OPS-003, OPS-015). Calls run one at a time. */
 let chain = Promise.resolve();
 function mutate(id, fn, opt = {}) {
   const run = async () => {
-    const cur = S.pls.get(id); if (!cur) throw new Core.OpError("GONE", "This playlist no longer exists.");
+    let cur = S.pls.get(id); if (!cur) throw new Core.OpError("GONE", "This playlist no longer exists.");
+    /* start from the newest saved copy: another tab may have changed or deleted this playlist */
+    const saved = await DB.get("kv", "pl:" + id);
+    if (!saved.found) { S.pls.delete(id); throw new Core.OpError("GONE", "This playlist was deleted in another tab."); }
+    if (saved.value && (saved.value.updatedAt || 0) > (cur.updatedAt || 0)) { try { cur = Core.checkShape(saved.value); S.pls.set(id, cur); } catch {} }
     if (opt.epoch != null && cur.epoch !== opt.epoch) throw new Core.OpError("STALE", "This playlist was reset while that was running, so the results were dropped.");
     const next = clone(cur); const result = fn(next); Core.validate(next); next.updatedAt = Date.now();
     const tr = (typeof opt.tracks === "function" ? opt.tracks(result, next) : opt.tracks || []).filter(Boolean);
     await DB.tx([{ store: "kv", key: "pl:" + id, value: next }, ...tr.map(t => ({ store: "tracks", value: slimTrack(t) }))]);
-    tr.forEach(t => { S.tr.set(t.id, t); S.tmp.delete(t.id); }); S.pls.set(id, next);
+    tr.forEach(t => { S.tr.set(t.id, t); S.tmp.delete(t.id); }); S.pls.set(id, next); announce({ t: "pl", id });
     if (!opt.quiet) refresh(id);
     return result;
   };
@@ -154,7 +168,9 @@ function trackRow(t, o = {}) {
   return row;
 }
 function rowsInto(el, list, q, f, ctx) { Q[q] = list.map(t => t.id); const fr = document.createDocumentFragment(); list.forEach((t, i) => fr.append(trackRow(t, Object.assign({ q, ctx }, f(t, i))))); el.append(fr); }
-function toCsv(list) { const rows = [["Position", "Track Name", "Artist Name", "Album"]]; list.forEach((t, i) => rows.push([i + 1, t.t, t.a, t.al])); return rows.map(r => r.map(v => { v = String(v ?? ""); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(",")).join("\r\n") + "\r\n"; }
+/* a cell that a spreadsheet would run as a formula (starts with =, @, or +/- followed by a function call) gets a leading ' */
+const csvSafe = v => (/^[=@\t\r]/.test(v) || /^[+-].*[(!]/.test(v) ? "'" + v : v);
+function toCsv(list) { const rows = [["Position", "Track Name", "Artist Name", "Album"]]; list.forEach((t, i) => rows.push([i + 1, t.t, t.a, t.al])); return rows.map(r => r.map(v => { v = csvSafe(String(v ?? "")); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(",")).join("\r\n") + "\r\n"; }
 
 /* ---------- player (30-second samples) ---------- */
 const A = new Audio(); A.preload = "none";

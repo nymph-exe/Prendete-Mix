@@ -641,7 +641,7 @@ const dayKey = () => new Date(Date.now() - 8 * 3600e3).toISOString().slice(0, 10
 const gemVer = id => { const m = /gemini-(\d+(?:\.\d+)?)/.exec(id); return m ? +m[1] : 0; };
 const PROVIDERS = {
   gemini: { label: "Google Gemini", note: "Free key from Google AI Studio (about 20 requests a day per model)", keyUrl: "https://aistudio.google.com/apikey", dailyPerModel: true,
-    async models(key) { const d = await Cat.getJSON("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } }).catch(e => { throw aiError(e.status || 0); });
+    async models(key) { const d = await Cat.getJSON("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } }).catch(e => { throw e.status === 400 || e.status === 401 || e.status === 403 ? aiError(401) : !e.status ? new Core.OpError("AI_NET", "Couldn't reach Google. Check your connection.") : aiError(e.status); });
       return (d.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => ({ id: m.name.replace(/^models\//, ""), name: m.displayName || m.name }))
         .filter(m => /^gemini-\d/.test(m.id) && !/embedding|aqa|imagen|tts|image|live|audio|veo|robotics|computer|learnlm|customtools|omni/i.test(m.id)); },
     /* order for Automatic: newest regular Flash first, then Flash-Lite, then Pro */
@@ -677,7 +677,9 @@ async function workingModel(a, p, avoid = new Set(), say) {
   const memo = a.memo || {}; const today = dayKey(); const spent = m => memo.day && memo.day[m] === today;
   const fresh = memo.model && Date.now() - (memo.at || 0) < 6 * 3600e3 && !avoid.has(memo.model) && !spent(memo.model);
   if (fresh) return memo.model;
-  const order = p.rank(a.models || []).filter(m => !avoid.has(m) && !spent(m) && !(memo.bad && memo.bad[m] && Date.now() - memo.bad[m] < 30 * 60e3));
+  const recent = m => memo.bad && memo.bad[m] && Date.now() - memo.bad[m] < 30 * 60e3;
+  let order = p.rank(a.models || []).filter(m => !avoid.has(m) && !spent(m) && !recent(m));
+  if (!order.length) order = p.rank(a.models || []).filter(m => !avoid.has(m) && !spent(m)).sort((x, y) => memo.bad[x] - memo.bad[y]).slice(0, 3); /* all failed lately: try the ones that failed longest ago */
   if (!order.length && (a.models || []).some(m => spent(m.id || m))) throw new Core.OpError("AI_DAILY", `Today's free ${p.label.replace(/ \(.*\)/, "")} requests are used up on all your models. They reset tomorrow; Classic works in the meantime.`);
   if (!order.length) throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
   if (p.noProbe) return memo.model && !avoid.has(memo.model) ? memo.model : order[0];  // each request counts toward a daily cap: use the real request as the test
@@ -748,22 +750,23 @@ const AI = {
     const a = ctx.ai || {}; const p = PROVIDERS[a.provider];
     if (!p || p.wip) throw new Core.OpError("AI_WIP", "That AI connection is coming next. For now pick Gemini or OpenRouter in this playlist's settings, or switch it to Classic.");
     if (!a.key) throw new Core.OpError("AI_KEY", `Add your ${p.label} key in Settings first.`);
-    const auto = !a.model || a.model === "auto"; const avoid = new Set();
+    const auto = !a.model || a.model === "auto"; const avoid = new Set(); let last = null;
     for (let tries = 0; tries < (p.noProbe ? 2 : 4); tries++) {
-      const model = auto ? await workingModel(a, p, avoid, say) : a.model;
+      let model; try { model = auto ? await workingModel(a, p, avoid, say) : a.model; } catch (e) { if (e.code === "AI_NONE" && last) break; throw e; }
       try { say && say(`Asking ${p.label.replace(/ \(.*\)/, "")} (${model})…`); const out = parseJSON(await p.chat(a.key, model, sys, user)); a.used = model;
         if (auto) { const memo = a.memo || (a.memo = {}); const was = memo.model; Object.assign(memo, { model, at: Date.now() }); if (was !== model && a.onMemo) a.onMemo(memo); } return out; }
       catch (e) {
+        last = e;
         if (typeof console !== "undefined") console.warn("[ai]", p.label, model, e.code || e.name, e.message);
         if (e.code === "AI_DAILY" && p.dailyPerModel) { const memo = a.memo || (a.memo = {}); memo.day = Object.assign(memo.day || {}, { [model]: dayKey() }); if (memo.model === model) delete memo.model; if (a.onMemo) a.onMemo(memo); avoid.add(model); if (auto) continue; throw new Core.OpError("AI_DAILY", `Today's free requests for ${model} are used up. Set this playlist's model to Automatic to use your other Gemini models.`); }
         if (e.code === "AI_DAILY") throw e;
         const retryable = ["AI_TIMEOUT", "AI_BUSY", "AI_GONE", "AI_QUOTA", "AI_PARSE", "AI_HTTP"].includes(e.code);
-        if (auto && retryable) { avoid.add(model); const memo = a.memo || (a.memo = {}); memo.bad = Object.assign(memo.bad || {}, { [model]: Date.now() }); if (memo.model === model) delete memo.model; if (a.onMemo) a.onMemo(memo); continue; }
+        if (auto && retryable) { avoid.add(model); if (e.code !== "AI_PARSE") { const memo = a.memo || (a.memo = {}); memo.bad = Object.assign(memo.bad || {}, { [model]: Date.now() }); if (memo.model === model) delete memo.model; if (a.onMemo) a.onMemo(memo); } continue; }
         if (!auto && retryable) throw new Core.OpError(e.code, `${e.message} (${model}). In this playlist's settings, set the model to Automatic so the app can switch to one that's answering.`);
         throw e;
       }
     }
-    throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
+    throw new Core.OpError("AI_NONE", `None of your models gave a usable answer${last && last.message && last.code !== "AI_NONE" ? ` (last problem: ${last.message.split(/(?<=\.)\s/)[0].replace(/\.$/, "").replace(/^./, c => c.toLowerCase())})` : ""}. Try again later, or switch this playlist to Classic.`);
   },
   async interpret(ctx, text) {
     const user = `Read this playlist description and turn it into structure. Keep the user's intent; don't add requirements they didn't state.\n\nDescription:\n"""${text}"""\n\nReturn JSON exactly like:\n{"name":"a short playlist name if the description suggests one, else empty","summary":"one or two sentences restating the musical identity, in the description's language","include":[{"title":"","artist":""}],"references":[{"title":"","artist":""}],"referenceArtists":[""],"excludeArtists":[""],"excludeSongs":[{"title":"","artist":""}],"traits":{"genres":[""],"moods":[""],"keywords":["specific styles or scenes, e.g. lofi, amapiano, corridos tumbados"],"energy":"low|medium|high or empty","tempo":"slow|mid|fast or empty","bpm":[0,0],"era":[0,0],"languages":["es","en"],"notLanguages":[],"explicit":"any|clean|explicit","versions":false,"avoidHits":false,"preferHits":false}}\n\nRules: put a song in "include" only when the user clearly asks for it to be on the playlist. Songs mentioned as examples of the sound go in "references". Songs or artists mentioned as what they don't want go in the exclude lists. An example used to explain a problem (like "X is too mellow") is not a request to add X. Use [0,0] for bpm unless the user wrote a BPM number, and [0,0] for era unless they mention years or decades; when they give only a start year, use the current year as the end. Languages are ISO 639-1 codes; "languages" are the ones wanted, "notLanguages" the ones ruled out. Moods may use: ${Object.keys(MOODS).join(', ')}.`;
@@ -778,7 +781,7 @@ const AI = {
       const cur = ctx.latest(); if (!cur) throw new Core.OpError("GONE", "This playlist was deleted.");
       const user = `${directionBlock(cur, ctx.never, ctx.getTrack)}\n\n${stateBlock(cur, ctx.getTrack)}\n\n${missing.length ? "These earlier suggestions couldn't be found in the catalog, so don't repeat them:\n" + missing.join("\n") + "\n\n" : ""}Recommend ${want} new songs that fit this playlist and aren't listed above. Return JSON: {"songs":[{"title":"","artist":"","why":"one short reason tied to the direction"}]}`;
       const j = await this.ask(ctx, SYS, user, say);
-      const v = await verifyAll((j.songs || []).slice(0, 50), R, Object.assign({ stopped: opt.stopped }, ctx), say, "Checking each song in the catalog");
+      const v = await verifyAll(songsOf(j && j.songs).slice(0, 50), R, Object.assign({ stopped: opt.stopped }, ctx), say, "Checking each song in the catalog");
       missing = [...new Set(missing.concat(v.missing))]; skipped = [...new Set(skipped.concat(v.skipped))];
       for (let i = 0; i < v.ok.length && found < opt.target; i += 8) { const r = await opt.onBatch(v.ok.slice(i, Math.min(i + 8, i + opt.target - found))); found += r.added; }
     }
@@ -790,16 +793,35 @@ const AI = {
     say(`Asking ${PROVIDERS[ctx.ai.provider].label} to pick ${slots}…`);
     const user = `${directionBlock(pl, ctx.never, ctx.getTrack)}\n\n${stateBlock(pl, ctx.getTrack, { pendingIdx: pend })}\n\nThe playlist has ${slots} open spot${slots === 1 ? "" : "s"}. Fill them with the songs that fit best. Prefer numbers from the waiting list; only suggest new songs if not enough of them fit. Never pick anything that doesn't fit just to fill space. Return JSON: {"pick":[numbers],"new":[{"title":"","artist":"","why":""}]}`;
     const j = await this.ask(ctx, SYS, user, say);
-    const picks = []; for (const n of j.pick || []) { const t = pend[(+n) - 1]; if (t && !picks.some(p => p.id === t.id) && picks.length < slots) picks.push({ id: t.id }); }
+    const picks = []; for (const n of arr(j && j.pick)) { const t = pend[(+n) - 1]; if (t && !picks.some(p => p.id === t.id) && picks.length < slots) picks.push({ id: t.id }); }
     let fresh = [], missing = [];
-    if (picks.length < slots && (j.new || []).length) { const v = await verifyAll(j.new.slice(0, slots - picks.length + 5), R, Object.assign({ stopped: opt.stopped }, ctx), say, "Checking each song in the catalog"); fresh = v.ok.slice(0, slots - picks.length); missing = v.missing; }
+    const nu = songsOf(j && j.new);
+    if (picks.length < slots && nu.length) { const v = await verifyAll(nu.slice(0, slots - picks.length + 5), R, Object.assign({ stopped: opt.stopped }, ctx), say, "Checking each song in the catalog"); fresh = v.ok.slice(0, slots - picks.length); missing = v.missing; }
     return { picks, fresh, missing };
   }
 };
 
+/* ---------- AI answers are untrusted: keep only the shapes the app expects ---------- */
+const arr = x => (Array.isArray(x) ? x : []);
+const str = x => (typeof x === "string" ? x : typeof x === "number" ? String(x) : "").trim().slice(0, 300);
+const songsOf = x => arr(x).filter(it => it && typeof it === "object").map(it => ({ title: str(it.title), artist: str(it.artist), why: str(it.why) })).filter(it => it.title);
+const namesOf = x => (typeof x === "string" ? x.split(/\s*,\s*/) : arr(x)).map(n => (n && typeof n === "object" ? str(n.name) : str(n))).filter(Boolean);
+function cleanReading(j) {
+  j = j && typeof j === "object" ? j : {}; const t = j.traits && typeof j.traits === "object" ? j.traits : {};
+  const nums = x => (Array.isArray(x) && x.length >= 2 && x.slice(0, 2).every(n => Number.isFinite(+n)) ? [+x[0], +x[1]] : null);
+  return { name: str(j.name).slice(0, 100), summary: str(j.summary), verifyNames: !!j.verifyNames,
+    include: songsOf(j.include), references: songsOf(j.references), excludeSongs: songsOf(j.excludeSongs),
+    referenceArtists: namesOf(j.referenceArtists), excludeArtists: namesOf(j.excludeArtists),
+    maybeArtists: arr(j.maybeArtists).filter(c => c && typeof c === "object" && str(c.name)).map(c => ({ name: str(c.name), role: c.role === "ex" ? "ex" : "ref" })),
+    traits: { genres: namesOf(t.genres), moods: namesOf(t.moods), keywords: namesOf(t.keywords), notStyles: namesOf(t.notStyles), languages: namesOf(t.languages), notLanguages: namesOf(t.notLanguages),
+      energy: str(t.energy), tempo: str(t.tempo), explicit: str(t.explicit) || "any", bpm: nums(t.bpm), era: nums(t.era),
+      versions: t.versions === true, avoidHits: t.avoidHits === true, preferHits: t.preferHits === true, gems: t.gems === true, crowd: t.crowd === true } };
+}
+
 /* ---------- reading → direction (shared by the Classic reader and the AI reader) ----------
    Every song and artist is looked up in the catalog first; anything that can't be found is reported, never invented. */
 async function applyReading(j, st, o = {}) {
+  j = cleanReading(j);
   const say = o.say || (() => {}), d = st.dir, missing = [], unchecked = [], strict = !!j.verifyNames;
   d.exclude = d.exclude || { artists: [], songs: [] }; d.form = d.form || {};
   const look = async (it, into) => { if (!it || !it.title) return; say(`Looking up ${it.title}…`); const label = it.artist ? `${it.title} — ${it.artist}` : it.title;
@@ -823,7 +845,9 @@ async function applyReading(j, st, o = {}) {
   const tr = j.traits || {}, f = d.form; const gl = o.genres || [];
   for (const n of (tr.genres || []).filter(Boolean)) { const g = gl.find(x => Core.norm(x.name) === Core.norm(n)); const item = g ? { id: g.id, name: g.name } : { id: null, name: n };
     const have = (f.genres || []).find(x => Core.norm(x.name) === Core.norm(item.name)); if (!have) f.genres = [...(f.genres || []), item]; else if (!have.id && item.id) have.id = item.id; }
-  for (const m0 of (tr.moods || []).filter(Boolean)) { const m = Object.keys(MOODS).find(k => Core.norm(k) === Core.norm(m0)) || m0; if (!(f.moods || []).includes(m)) f.moods = [...(f.moods || []), m]; }
+  /* moods the app knows become moods; any other word is kept as a style keyword instead of a mood it can't use */
+  for (const m0 of (tr.moods || []).filter(Boolean)) { const m = Object.keys(MOODS).find(k => Core.norm(k) === Core.norm(m0));
+    if (m) { if (!(f.moods || []).includes(m)) f.moods = [...(f.moods || []), m]; } else if (!/^\d+$/.test(m0) && !(f.keywords || []).includes(m0.toLowerCase())) f.keywords = [...(f.keywords || []), m0.toLowerCase()]; }
   for (const k of (tr.keywords || []).filter(Boolean)) if (!(f.keywords || []).includes(k)) f.keywords = [...(f.keywords || []), k];
   for (const k of (tr.notStyles || []).filter(Boolean)) if (!(f.notStyles || []).includes(k)) f.notStyles = [...(f.notStyles || []), k];
   if (["low", "medium", "high"].includes(tr.energy)) f.energy = tr.energy;
@@ -845,7 +869,7 @@ async function applyReading(j, st, o = {}) {
   return { summary: j.summary || "", missing: [...new Set(missing)], unchecked: [...new Set(unchecked)] };
 }
 
-const API = { workingModel, applyReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
+const API = { workingModel, applyReading, cleanReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
 G.Engines = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);
