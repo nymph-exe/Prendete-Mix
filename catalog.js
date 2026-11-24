@@ -17,13 +17,21 @@ const SETTINGS = { country: "us" };
 
 /* ---------- matching ---------- */
 const mnorm = s => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\((feat|ft|with)[^)]*\)|\[[^\]]*\]/g, " ").replace(/\s(feat|ft)\.?\s.*$/, "").replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+function lev(a, b) { if (Math.abs(a.length - b.length) > 2) return 9; const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) { let prev = d[0]; d[0] = i; for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t; } } return d[b.length]; }
+/* Same song: title equal after normalizing (spacing/punctuation ignored), or a one-letter typo (two for long titles)
+   when the artist matches exactly. The result is always a real catalog track, never a made-up one. */
 function match(title, artist, x) {
   const nt = mnorm(title), ng = mnorm(x.t); if (!nt || !ng) return false;
-  const tOk = nt === ng || ng.startsWith(nt + " ") || nt.startsWith(ng + " ") || Core.baseTitle(title) === Core.baseTitle(x.t);
-  const want = String(artist || "").split(/;|,|&| x | feat\.? | ft\.? /i).map(mnorm).filter(Boolean);
+  const want = String(artist || "").split(/;|,|&| x | feat\.? | ft\.? | and | y /i).map(mnorm).filter(Boolean);
   const got = String(x.a || "").split(/;\s*/).map(mnorm).filter(Boolean);
-  const aOk = want.some(w => got.some(g => g === w || g.includes(w) || w.includes(g)));
-  return tOk && aOk;
+  const exactA = want.some(w => got.includes(w));
+  const aOk = exactA || want.some(w => got.some(g => (g.includes(w) || w.includes(g)) && Math.min(g.length, w.length) >= 3));
+  if (!aOk) return false;
+  const sq = s => s.replace(/\s+/g, ""), bt = s => sq(mnorm(Core.baseTitle(s)));
+  if (nt === ng || sq(nt) === sq(ng) || ng.startsWith(nt + " ") || nt.startsWith(ng + " ") || (Core.baseTitle(title) && Core.baseTitle(title) === Core.baseTitle(x.t)) || (bt(title) && bt(title) === bt(x.t))) return true;
+  if (exactA) { const a = sq(nt), b = sq(ng); const L = Math.min(a.length, b.length); if (L >= 5 && lev(a, b) <= (L >= 11 ? 2 : 1)) return true; }
+  return false;
 }
 const expOf = ex => (ex === 1 || ex === 4 ? "explicit" : ex === 3 ? "clean" : "");
 
@@ -178,10 +186,10 @@ const LRCLIB = {
 const LANG_NAMES = { es: "Spanish", en: "English", pt: "Portuguese", fr: "French", it: "Italian", de: "German", ko: "Korean", ja: "Japanese", zh: "Chinese", ru: "Russian", ar: "Arabic", hi: "Hindi" };
 const SW = {
   en: "the and you i my your it is on that this with for we be are what all just like got know when but now up get go she he they do don't can't i'm it's you're to of out down back never need how time way gonna wanna gotta tonight feel make let love night think tell see say only ever where why who been have has had would could should because about over into them their there these those our ain't i'll i've",
-  es: "el los las y pero yo tú tu eres estoy quiero mi muy porque cuando también ahora aquí mucho bien voy ella él nosotros conmigo contigo otra vez bebé noche corazón hoy siempre tengo hace hacer puedo dime mami pa' perreo baila dale ya sola sin con una lo le del al ese esa esto eso así más qué cómo dónde quieres tienes sabes tus mis sus están hay fue vamos mujer calle fiesta mientras después antes nadie nunca todo",
-  pt: "você voce não nao eu meu minha com uma isso é está tá mais então sem pra pro também muito sua seu ele ela nós vai vou tô gente coisa quero sou já olha beijo coração saudade amanhã hoje sempre ninguém alguém tudo agora aqui quando onde fazer tem tenho nossa vamos mim dela dele num numa essa esse nunca todo",
-  fr: "je il elle nous vous les des une est et pas mais moi toi avec pour dans ce qui c'est j'ai oui ne sur au du mon ma ton ta ça comme tout rien suis veux fait plus quand bien aussi encore toujours jamais cœur nuit",
-  it: "il che non sono ti mi ma per della sei io noi voi questo questa quello come cosa perché amore ancora sempre niente più già anche ciao bella cuore notte gli una di da e lo",
+  es: "el los las y pero yo tú tu eres estoy quiero mi muy porque cuando también ahora aquí mucho bien voy ella él nosotros conmigo contigo otra vez bebé noche corazón hoy siempre tengo hace hacer puedo dime mami pa' perreo baila dale ya sola sin con una lo le del al ese esa esto eso así más qué cómo dónde quieres tienes sabes tus mis sus están hay fue vamos mujer calle fiesta mientras después antes nadie nunca todo de la que en me te se no",
+  pt: "você voce não nao eu meu minha com uma isso é está tá ta mais mas então sem pra pro também muito sua seu ele ela nós vai vou tô gente coisa quero sou já olha beijo coração saudade amanhã hoje sempre ninguém alguém tudo agora aqui quando onde fazer tem tenho nossa vamos mim dela dele num numa essa esse nunca todo e da do de o os as no na que se me te um ao bem vem aí ai lá novinha bunda chão",
+  fr: "je il elle nous vous les des une est et pas mais moi toi avec pour dans ce qui c'est j'ai oui ne sur au du mon ma ton ta ça comme tout rien suis veux fait plus quand bien aussi encore toujours jamais cœur nuit de la que en me te se un le on y",
+  it: "il che non sono ti mi ma per della sei io noi voi questo questa quello come cosa perché amore ancora sempre niente più già anche ciao bella cuore notte gli una di da e lo la se me te un in",
   de: "ich du und nicht die der das ist ein eine mit mich dich mir dir wir ihr sie auf für auch wie was noch nur mein dein liebe immer nacht kein schon aber wenn ja so will in"
 };
 const SWI = new Map(); for (const [l, ws] of Object.entries(SW)) for (const w of ws.split(" ")) { if (!SWI.has(w)) SWI.set(w, []); SWI.get(w).push(l); }

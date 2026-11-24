@@ -118,10 +118,12 @@ function vSettings(v) {
   for (const [k, p] of Object.entries(Engines.PROVIDERS)) {
     if (p.wip) { ai.append(h("div", { class: "prov" }, h("div", { class: "nm" }, p.label, h("span", { class: "tag y", text: "Work in progress" })), h("p", { class: "small", text: `Coming next: your own ${k === "claude" ? "Claude" : "ChatGPT"} subscription, with no API key and no extra cost, through a connector in the ${k === "claude" ? "Claude" : "ChatGPT"} app.` }))); continue; }
     const a = S.meta.ai[k] || {}; const key = h("input", { type: "password", autocomplete: "off", placeholder: a.key ? "Key saved · paste a new one to replace it" : "Paste your key", "aria-label": p.label + " key" });
-    const stat = h("p", { class: "small", "aria-live": "polite", text: a.key ? `Connected · ${plural((a.models || []).length, "model")} available${a.model ? ` · default ${a.model}` : ""}` : "Not set up" });
+    const stat = h("p", { class: "small", "aria-live": "polite", text: a.key ? `Connected. ${plural((a.models || []).length, "model")} available${a.memo && a.memo.model ? `; answering lately: ${a.memo.model}` : ""}.` : "Not set up" });
     const save = async () => { const v2 = key.value.trim() || a.key; if (!v2) return toast("Paste a key first."); stat.textContent = "Checking the key…";
-      try { const models = await p.models(v2); if (!models.length) throw new Core.OpError("AI", "That key works but no free models came back."); S.meta.ai[k] = { key: v2, models, model: p.pick(models) }; await saveMeta(); toast(`${p.label} connected.`); render(); }
-      catch (e) { stat.textContent = e.message || "The key didn't work."; } };
+      try { const models = await p.models(v2); if (!models.length) throw new Core.OpError("AI", "That key works but no usable models came back.");
+        S.meta.ai[k] = { key: v2, models, model: "auto", memo: {} }; await saveMeta(); stat.textContent = `Key works. Checking which of your ${models.length} models are answering…`;
+        const ctx = aiCtx({ provider: k, model: "auto" }); const m = await Engines.workingModel(ctx, p); toast(`${p.label.replace(/ \(.*\)/, "")} connected. Answering now: ${m}.`, 6000); render(); }
+      catch (e) { stat.textContent = e.message || "The key didn't work."; if (S.meta.ai[k] && S.meta.ai[k].key) render(); } };
     ai.append(h("div", { class: "prov" }, h("div", { class: "nm" }, p.label, a.key ? h("span", { class: "tag", text: "Connected" }) : null), h("p", { class: "small" }, p.note + " · ", h("a", { class: "lnk", href: p.keyUrl, target: "_blank", rel: "noopener noreferrer", text: "Get a key ↗" })),
       h("div", { class: "inl" }, key, btn(a.key ? "Check again" : "Save key", "sm", save), a.key ? btn("Remove", "ghost sm", async () => { delete S.meta.ai[k]; await saveMeta().catch(() => {}); toast("Key removed."); render(); }) : null), stat));
   }
@@ -204,8 +206,9 @@ async function startJob(id, kind) {
       const got = await mutate(id, p => { const a = Core.fillCommit(p, r.picks.concat(r.fresh.map(x => ({ id: x.t.id, isNew: true }))), gt); a.forEach(x => { if (why.get(x)) p.rels[x].why = why.get(x); }); return a; },
         { epoch: job.epoch, tracks: a => a.map(x => fresh.get(x)).filter(Boolean), quiet: true });
       const left = Core.counts(S.pls.get(id)).available;
-      report(id, got.length ? `Random fill added ${plural(got.length, "song")}${left ? `. ${plural(left, "open spot")} left${got.length < slots ? ": not enough songs that fit turned up, so the rest stay open" : ""}` : ". The playlist is full"}.${(r.missing || []).length ? ` ${plural(r.missing.length, "AI suggestion")} couldn't be found in the catalog and ${r.missing.length === 1 ? "was" : "were"} left out.` : ""}`
-        : "Random fill didn't find songs that fit well enough, so nothing was added.");
+      const via = eng.ai && eng.ai.used ? ` Model: ${eng.ai.used}.` : "";
+      report(id, (got.length ? `Random fill added ${plural(got.length, "song")}${left ? `. ${plural(left, "open spot")} left${got.length < slots ? ": not enough songs that fit turned up, so the rest stay open" : ""}` : ". The playlist is full"}.${(r.missing || []).length ? ` ${plural(r.missing.length, "AI suggestion")} couldn't be found in the catalog and ${r.missing.length === 1 ? "was" : "were"} left out.` : ""}`
+        : "Random fill didn't find songs that fit well enough, so nothing was added.") + via);
     } else {
       const batchId = "b" + Date.now().toString(36); const target = targetFor(S.pls.get(id));
       const r = await eng.impl.generate(ctx, { target, onProgress: say, stopped: ctx.stopped,
@@ -217,9 +220,10 @@ async function startJob(id, kind) {
         } });
       const miss = (r.missing || []).length;
       const stopped = job.stop && S.pls.has(id);
-      report(id, stopped ? (job.found ? `Stopped. ${plural(job.found, "recommendation")} added.` : "Stopped. Nothing was added.")
+      const via = eng.ai && eng.ai.used ? ` Model: ${eng.ai.used}.` : "";
+      report(id, (stopped ? (job.found ? `Stopped. ${plural(job.found, "recommendation")} added.` : "Stopped. Nothing was added.")
         : job.found ? `${plural(job.found, "new recommendation")} added.${miss ? ` ${plural(miss, "AI suggestion")} couldn't be found in the catalog and ${miss === 1 ? "was" : "were"} left out.` : ""}`
-        : `No new songs that fit turned up this time. Nothing else changed.${miss ? ` ${plural(miss, "AI suggestion")} couldn't be found in the catalog.` : ""}`);
+        : `No new songs that fit turned up this time. Nothing else changed.${miss ? ` ${plural(miss, "AI suggestion")} couldn't be found in the catalog.` : ""}`) + via);
     }
   } catch (e) {
     if (!S.pls.has(id) || (e && e.code === "GONE")) return;

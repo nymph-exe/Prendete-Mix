@@ -277,40 +277,65 @@ const Classic = {
 
 /* ---------- AI providers ---------- */
 function aiError(status, body) {
-  const m = (body && (body.error && (body.error.message || body.error))) || "";
-  if (status === 400 && /api key/i.test(m)) return "The key was refused. Check it in Settings.";
-  if (status === 401 || status === 403) return "The key was refused. Check it in Settings.";
-  if (status === 404) return "That model isn't available anymore. Pick another one in this playlist's Settings.";
-  if (status === 429) return "The free limit for this model is used up for now. Try again later or pick another model.";
-  return "The AI service had a problem (" + status + "). Try again in a bit.";
+  const m = (body && (body.error && (body.error.message || body.error))) || ""; const E = (code, msg) => new Core.OpError(code, msg, { status });
+  if ((status === 400 && /api key/i.test(m)) || status === 401 || status === 403) return E("AI_KEY", "The key was refused. Check it in Settings.");
+  if (status === 404 || /no longer available|not found|deprecated/i.test(m)) return E("AI_GONE", "That model isn't available on your account anymore.");
+  if (status === 503 || /high demand|overloaded|unavailable/i.test(m)) return E("AI_BUSY", "That model is busy right now.");
+  if (status === 429) return E("AI_QUOTA", "The free limit for that model is used up for now.");
+  if (status === 400 && /thinking/i.test(m)) return E("AI_THINK", m);
+  return E("AI_HTTP", "The AI service had a problem (" + status + ").");
 }
-async function postJSON(url, headers, body, timeout = 90000) {
+async function postJSON(url, headers, body, timeout = 120000) {
   const ac = new AbortController(); const t = setTimeout(() => ac.abort(), timeout);
   try { const r = await fetch(url, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, headers), body: JSON.stringify(body), signal: ac.signal });
-    let j = null; try { j = await r.json(); } catch {} if (!r.ok) throw new Core.OpError("AI_HTTP", aiError(r.status, j)); return j;
-  } catch (e) { if (e.name === "AbortError") throw new Core.OpError("AI_TIMEOUT", "The AI took too long to answer. Try again."); if (e instanceof Core.OpError) throw e; throw new Core.OpError("AI_NET", "Couldn't reach the AI service. Check your connection."); }
+    let j = null; try { j = await r.json(); } catch {} if (!r.ok) throw aiError(r.status, j); return j;
+  } catch (e) { if (e.name === "AbortError") throw new Core.OpError("AI_TIMEOUT", "That model took too long to answer."); if (e instanceof Core.OpError) throw e; throw new Core.OpError("AI_NET", "Couldn't reach the AI service. Check your connection."); }
   finally { clearTimeout(t); }
 }
+const gemVer = id => { const m = /gemini-(\d+(?:\.\d+)?)/.exec(id); return m ? +m[1] : 0; };
 const PROVIDERS = {
   gemini: { label: "Google Gemini", note: "Free key from Google AI Studio", keyUrl: "https://aistudio.google.com/apikey",
-    async models(key) { const d = await Cat.getJSON("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } }).catch(e => { throw new Core.OpError("AI_HTTP", aiError(e.status || 0)); });
+    async models(key) { const d = await Cat.getJSON("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } }).catch(e => { throw aiError(e.status || 0); });
       return (d.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => ({ id: m.name.replace(/^models\//, ""), name: m.displayName || m.name }))
-        .filter(m => /gemini|gemma/i.test(m.id) && !/embedding|aqa|imagen|tts|image|live|audio|veo|robotics|computer|learnlm/i.test(m.id)); },
-    pick(list) { const fl = list.filter(m => /gemini-[\d.]+-flash$/.test(m.id)).sort((a, b) => parseFloat(b.id.split("-")[1]) - parseFloat(a.id.split("-")[1])); return (fl[0] || list.find(m => /flash/.test(m.id)) || list[0] || {}).id; },
-    async chat(key, model, sys, user) {
-      const j = await postJSON(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { "x-goog-api-key": key },
-        { systemInstruction: { parts: [{ text: sys }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: { temperature: .9, responseMimeType: "application/json" } });
+        .filter(m => /^gemini-\d/.test(m.id) && !/embedding|aqa|imagen|tts|image|live|audio|veo|robotics|computer|learnlm|customtools|omni/i.test(m.id)); },
+    /* order for Automatic: newest regular Flash first, then Flash-Lite, then Pro */
+    rank(list) { const k = m => (/flash-lite/.test(m.id) ? 1 : /flash/.test(m.id) ? 0 : 2) * 100 - gemVer(m.id) + (/preview|exp/.test(m.id) ? .5 : 0); return list.slice().sort((a, b) => k(a) - k(b)).map(m => m.id); },
+    pick(list) { return "auto"; },
+    async chat(key, model, sys, user, o = {}) {
+      const gen = { temperature: .9, responseMimeType: "application/json" }; if (gemVer(model) >= 3 && !o.noThink) gen.thinkingConfig = { thinkingLevel: "low" };
+      let j;
+      try { j = await postJSON(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { "x-goog-api-key": key }, { systemInstruction: { parts: [{ text: sys }] }, contents: [{ role: "user", parts: [{ text: user }] }], generationConfig: gen }, o.timeout); }
+      catch (e) { if (e.code === "AI_THINK" && !o.noThink) return this.chat(key, model, sys, user, Object.assign({}, o, { noThink: true })); throw e; }
       const c = (j.candidates || [])[0]; return ((c && c.content && c.content.parts) || []).map(p => p.text || "").join(""); } },
   openrouter: { label: "OpenRouter (free models)", note: "Free key from OpenRouter", keyUrl: "https://openrouter.ai/keys",
     async models() { const d = await Cat.getJSON("https://openrouter.ai/api/v1/models"); return (d.data || []).filter(m => /:free$/.test(m.id)).map(m => ({ id: m.id, name: m.name || m.id, ctx: m.context_length || 0 })).sort((a, b) => b.ctx - a.ctx); },
-    pick(list) { return (list.find(m => /deepseek|llama|gemini|qwen/i.test(m.id)) || list[0] || {}).id; },
-    async chat(key, model, sys, user) {
+    rank(list) { const pref = m => (/deepseek|gemini|llama-3\.3|qwen3|gpt-oss|mistral/i.test(m.id) ? 0 : 1); return list.slice().sort((a, b) => pref(a) - pref(b) || b.ctx - a.ctx).map(m => m.id); },
+    pick() { return "auto"; },
+    async chat(key, model, sys, user, o = {}) {
       const j = await postJSON("https://openrouter.ai/api/v1/chat/completions", { Authorization: "Bearer " + key, "HTTP-Referer": (G.location && G.location.origin) || "https://nymph-exe.github.io", "X-Title": "Préndete Mix" },
-        { model, temperature: .9, messages: [{ role: "system", content: sys }, { role: "user", content: user }] });
+        { model, temperature: .9, messages: [{ role: "system", content: sys }, { role: "user", content: user }] }, o.timeout);
+      if (j && j.error) throw aiError(j.error.code || 0, j);
       return ((j.choices || [])[0] || {}).message ? j.choices[0].message.content || "" : ""; } },
   claude: { label: "Claude (your subscription)", wip: true },
   chatgpt: { label: "ChatGPT (your subscription)", wip: true }
 };
+/* Automatic model: probe several models at once with a tiny request and use the best-ranked one that answers.
+   The choice is remembered (ctx.ai.memo) and replaced when that model fails later. */
+async function workingModel(a, p, avoid = new Set(), say) {
+  const memo = a.memo || {}; const fresh = memo.model && Date.now() - (memo.at || 0) < 30 * 60e3 && !avoid.has(memo.model);
+  if (fresh) return memo.model;
+  const order = p.rank(a.models || []).filter(m => !avoid.has(m) && !(memo.bad && memo.bad[m] && Date.now() - memo.bad[m] < 30 * 60e3));
+  if (!order.length) throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
+  for (let i = 0; i < order.length; i += 6) {
+    say && say("Finding a model that's answering…");
+    const batch = order.slice(i, i + 6);
+    const res = await Promise.all(batch.map(m => p.chat(a.key, m, "Reply with JSON only.", 'Return {"ok":true}', { timeout: 15000 }).then(() => true).catch(e => { if (e.code === "AI_KEY") throw e; memo.bad = Object.assign(memo.bad || {}, { [m]: Date.now() }); return false; })));
+    const k = res.findIndex(Boolean);
+    if (k >= 0) { Object.assign(memo, { model: batch[k], at: Date.now() }); if (memo.bad) delete memo.bad[batch[k]]; a.memo = memo; if (a.onMemo) a.onMemo(memo); return batch[k]; }
+  }
+  a.memo = memo; if (a.onMemo) a.onMemo(memo);
+  throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
+}
 function parseJSON(text) {
   let s = String(text || "").replace(/```(?:json)?/gi, "").trim(); const a = s.indexOf("{"), b = s.lastIndexOf("}");
   if (a < 0 || b < a) throw new Core.OpError("AI_PARSE", "The AI's answer couldn't be read. Try again or pick another model.");
@@ -364,26 +389,36 @@ async function verifyAll(items, R, ctx, say, label) {
 }
 const AI = {
   id: "ai", label: "AI",
-  async ask(ctx, sys, user) {
+  async ask(ctx, sys, user, say) {
     const a = ctx.ai || {}; const p = PROVIDERS[a.provider];
     if (!p || p.wip) throw new Core.OpError("AI_WIP", "That AI connection is coming next. For now pick Gemini or OpenRouter in this playlist's settings, or switch it to Classic.");
     if (!a.key) throw new Core.OpError("AI_KEY", `Add your ${p.label} key in Settings first.`);
-    if (!a.model) throw new Core.OpError("AI_MODEL", "Pick a model for this playlist in its Settings.");
-    return parseJSON(await p.chat(a.key, a.model, sys, user));
+    const auto = !a.model || a.model === "auto"; const avoid = new Set();
+    for (let tries = 0; tries < 4; tries++) {
+      const model = auto ? await workingModel(a, p, avoid, say) : a.model;
+      try { say && say(`Asking ${p.label.replace(/ \(.*\)/, "")} (${model})…`); const out = parseJSON(await p.chat(a.key, model, sys, user)); a.used = model; return out; }
+      catch (e) {
+        const retryable = ["AI_TIMEOUT", "AI_BUSY", "AI_GONE", "AI_QUOTA", "AI_PARSE"].includes(e.code);
+        if (auto && retryable) { avoid.add(model); const memo = a.memo || (a.memo = {}); memo.bad = Object.assign(memo.bad || {}, { [model]: Date.now() }); if (memo.model === model) delete memo.model; if (a.onMemo) a.onMemo(memo); continue; }
+        if (!auto && retryable) throw new Core.OpError(e.code, `${e.message} (${model}). In this playlist's settings, set the model to Automatic so the app can switch to one that's answering.`);
+        throw e;
+      }
+    }
+    throw new Core.OpError("AI_NONE", "None of your models are answering right now. Try again in a few minutes, or switch this playlist to Classic.");
   },
   async interpret(ctx, text) {
     const user = `Read this playlist description and turn it into structure. Keep the user's intent; don't add requirements they didn't state.\n\nDescription:\n"""${text}"""\n\nReturn JSON exactly like:\n{"name":"a short playlist name if the description suggests one, else empty","summary":"one or two sentences restating the musical identity, in the description's language","include":[{"title":"","artist":""}],"references":[{"title":"","artist":""}],"referenceArtists":[""],"excludeArtists":[""],"excludeSongs":[{"title":"","artist":""}],"traits":{"genres":[""],"moods":[""],"keywords":["specific styles or scenes, e.g. lofi, amapiano, corridos tumbados"],"energy":"low|medium|high or empty","tempo":"slow|mid|fast or empty","bpm":[0,0],"era":[0,0],"languages":["es","en"],"notLanguages":[],"explicit":"any|clean|explicit","versions":false,"avoidHits":false,"preferHits":false}}\n\nRules: put a song in "include" only when the user clearly asks for it to be on the playlist. Songs mentioned as examples of the sound go in "references". Songs or artists mentioned as what they don't want go in the exclude lists. An example used to explain a problem (like "X is too mellow") is not a request to add X. Use [0,0] for era and bpm when not stated. Languages are ISO 639-1 codes; "languages" are the ones wanted, "notLanguages" the ones ruled out. Moods may use: ${Object.keys(MOODS).join(', ')}.`;
-    return this.ask(ctx, "You turn playlist descriptions into structured requirements. Never invent songs. Reply with JSON only.", user);
+    return this.ask(ctx, "You turn playlist descriptions into structured requirements. Never invent songs. Reply with JSON only.", user, ctx.say);
   },
   async generate(ctx, opt) {
     const say = opt.onProgress || (() => {}); const pl = ctx.latest(); if (!pl) throw new Core.OpError("GONE", "This playlist was deleted.");
     const R = rules(pl, ctx.never); let found = 0, missing = [], skipped = [];
     for (let round = 0; round < 2 && found < opt.target && !(opt.stopped && opt.stopped()); round++) {
       const want = Math.min(40, opt.target - found + 8);
-      say(round ? "Asking for a few more…" : `Asking ${PROVIDERS[ctx.ai.provider].label}…`);
+      say(round ? "Asking for a few more…" : `Asking ${PROVIDERS[ctx.ai.provider].label.replace(/ \(.*\)/, "")}…`);
       const cur = ctx.latest(); if (!cur) throw new Core.OpError("GONE", "This playlist was deleted.");
       const user = `${directionBlock(cur, ctx.never, ctx.getTrack)}\n\n${stateBlock(cur, ctx.getTrack)}\n\n${missing.length ? "These earlier suggestions couldn't be found in the catalog, so don't repeat them:\n" + missing.join("\n") + "\n\n" : ""}Recommend ${want} new songs that fit this playlist and aren't listed above. Return JSON: {"songs":[{"title":"","artist":"","why":"one short reason tied to the direction"}]}`;
-      const j = await this.ask(ctx, SYS, user);
+      const j = await this.ask(ctx, SYS, user, say);
       const v = await verifyAll((j.songs || []).slice(0, 50), R, Object.assign({ stopped: opt.stopped }, ctx), say, "Checking each song in the catalog");
       missing = [...new Set(missing.concat(v.missing))]; skipped = [...new Set(skipped.concat(v.skipped))];
       for (let i = 0; i < v.ok.length && found < opt.target; i += 8) { const r = await opt.onBatch(v.ok.slice(i, Math.min(i + 8, i + opt.target - found))); found += r.added; }
@@ -395,7 +430,7 @@ const AI = {
     const pend = Core.evidence(pl, ctx.getTrack).pending.filter(t => !blocked(t, R)).slice(-300);
     say(`Asking ${PROVIDERS[ctx.ai.provider].label} to pick ${slots}…`);
     const user = `${directionBlock(pl, ctx.never, ctx.getTrack)}\n\n${stateBlock(pl, ctx.getTrack, { pendingIdx: pend })}\n\nThe playlist has ${slots} open spot${slots === 1 ? "" : "s"}. Fill them with the songs that fit best. Prefer numbers from the waiting list; only suggest new songs if not enough of them fit. Never pick anything that doesn't fit just to fill space. Return JSON: {"pick":[numbers],"new":[{"title":"","artist":"","why":""}]}`;
-    const j = await this.ask(ctx, SYS, user);
+    const j = await this.ask(ctx, SYS, user, say);
     const picks = []; for (const n of j.pick || []) { const t = pend[(+n) - 1]; if (t && !picks.some(p => p.id === t.id) && picks.length < slots) picks.push({ id: t.id }); }
     let fresh = [], missing = [];
     if (picks.length < slots && (j.new || []).length) { const v = await verifyAll(j.new.slice(0, slots - picks.length + 5), R, Object.assign({ stopped: opt.stopped }, ctx), say, "Checking each song in the catalog"); fresh = v.ok.slice(0, slots - picks.length); missing = v.missing; }
@@ -441,7 +476,7 @@ async function applyReading(j, st, o = {}) {
   return { summary: j.summary || "", missing: [...new Set(missing)], unchecked: [...new Set(unchecked)] };
 }
 
-const API = { applyReading, Classic, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
+const API = { workingModel, applyReading, Classic, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
 G.Engines = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -71,9 +71,9 @@ function vHome(v) {
 /* ---------- engine picker (per playlist) ---------- */
 function aiReady(p) { const pv = Engines.PROVIDERS[p]; return pv && !pv.wip && S.meta.ai[p] && S.meta.ai[p].key; }
 function firstAi() { return ["gemini", "openrouter"].find(aiReady) || null; }
-function defaultModel(p) { const a = S.meta.ai[p] || {}; return a.model || (a.models && a.models.length ? Engines.PROVIDERS[p].pick(a.models) : null); }
-function aiCtx(eng) { const p = eng && eng.provider; return { provider: p, model: (eng && eng.model) || defaultModel(p), key: p && S.meta.ai[p] ? S.meta.ai[p].key : null }; }
-function engineLabel(eng) { if (!eng || eng.mode !== "ai") return "Classic"; const p = Engines.PROVIDERS[eng.provider]; return `AI (${p ? p.label.replace(/ \(.*\)/, "") : "?"}${eng.model ? ", " + eng.model : ""})`; }
+function defaultModel(p) { return "auto"; }
+function aiCtx(eng) { const p = eng && eng.provider; const a = (p && S.meta.ai[p]) || {}; return { provider: p, model: (eng && eng.model) || "auto", key: a.key || null, models: a.models || [], memo: a.memo || {}, onMemo: memo => { if (S.meta.ai[p]) { S.meta.ai[p].memo = memo; saveMeta().catch(() => {}); } } }; }
+function engineLabel(eng) { if (!eng || eng.mode !== "ai") return "Classic"; const p = Engines.PROVIDERS[eng.provider]; return `AI (${p ? p.label.replace(/ \(.*\)/, "") : "?"}, ${!eng.model || eng.model === "auto" ? "automatic model" : eng.model})`; }
 const CLASSIC_NOTE = "Classic reads your description with built-in rules, then finds songs through Deezer's related artists and editorial playlists, ListenBrainz listening data, ReccoBeats audio features (energy, tempo, mood) and LRCLIB lyrics (language). It learns from what you approve and reject here.";
 function enginePicker(eng, onchange) {
   const box = h("div");
@@ -89,9 +89,10 @@ function enginePicker(eng, onchange) {
     if (!aiReady(eng.provider)) { box.append(h("p", { class: "note" }, `${Engines.PROVIDERS[eng.provider].label} needs a free key first. `, h("a", { class: "lnk", href: "#/settings", text: "Add it in Settings" }))); return; }
     const models = S.meta.ai[eng.provider].models || [];
     const ms = h("select", { class: "selp", "aria-label": "Model", onchange: e => { eng.model = e.target.value; onchange(eng); } });
-    if (!models.length) ms.append(h("option", { value: eng.model || "", text: eng.model || "Default" }));
+    const memo = S.meta.ai[eng.provider].memo || {};
+    ms.append(h("option", { value: "auto", text: "Automatic" + (memo.model ? ` (lately ${memo.model})` : "") })); if (!eng.model || eng.model === "auto") ms.firstChild.selected = true;
     models.forEach(md => { const o = h("option", { value: md.id, text: md.name && md.name !== md.id ? `${md.name} (${md.id})` : md.id }); if (md.id === eng.model) o.selected = true; ms.append(o); });
-    box.append(h("div", { class: "field" }, h("span", { class: "lbl", text: "Model" }), ms));
+    box.append(h("div", { class: "field" }, h("span", { class: "lbl", text: "Model" }), ms, h("span", { class: "small", text: "Automatic uses whichever of your models is answering, and switches if one gets busy or retired." })));
     box.append(h("p", { class: "small", text: "Every song the AI suggests is looked up in Deezer and Apple Music first. Anything that can't be found is left out and listed." }));
   };
   draw(); return box;
@@ -156,7 +157,7 @@ function namesEditor(list, label, placeholder, onchange) {
 async function readInto(st, engine, say) {
   const text = (st.dir.text || "").trim(); if (!text) throw new Core.OpError("EMPTY", "Write a description first.");
   let j;
-  if (engine && engine.mode === "ai") { if (!aiReady(engine.provider)) throw new Core.OpError("AI_KEY", "Add an AI key in Settings, or switch to Classic."); say("Reading it with " + Engines.PROVIDERS[engine.provider].label + "…"); j = await Engines.AI.interpret({ ai: aiCtx(engine) }, text); }
+  if (engine && engine.mode === "ai") { if (!aiReady(engine.provider)) throw new Core.OpError("AI_KEY", "Add an AI key in Settings, or switch to Classic."); say("Reading it with " + Engines.PROVIDERS[engine.provider].label.replace(/ \(.*\)/, "") + "…"); j = await Engines.AI.interpret({ ai: aiCtx(engine), say }, text); }
   else { say("Reading it…"); j = Reader.read(text); }
   const r = await Engines.applyReading(j, st, { genres: await loadGenres(), say, keep: t => { if (!S.tr.has(t.id)) S.tmp.set(t.id, t); } });
   if (j.name && st.setName) st.setName(String(j.name).slice(0, 100));
