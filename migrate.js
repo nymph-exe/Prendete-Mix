@@ -17,7 +17,7 @@ function legacyTrack(s) {
 const PRENDETE_TEXT = "Upbeat party songs I'd enjoy any time, in any language. Mellow is fine if it still works as a party song. No overplayed hits, TikTok/snippet songs, joke songs or throwback anthems. 2017–2026 is a rough guide for release years.";
 function prendeteDirection(refs) {
   return { text: PRENDETE_TEXT, refs: refs.slice(), artists: [], exclude: { artists: ["DaBaby"], songs: [] },
-    form: { genres: [], moods: ["Party"], energy: "", tempo: "", era: [2017, 2026], langs: [], explicit: "any", versions: false, avoidHits: true } };
+    form: { genres: [], keywords: [], moods: ["Party"], energy: "", tempo: "", bpm: null, era: [2017, 2026], langs: [], notLangs: [], explicit: "any", versions: false, avoidHits: true, preferHits: false } };
 }
 const capFor = n => Core.capacityOptions().find(c => c >= n) || Core.CONFIG.maxConfirmed;
 

@@ -14,7 +14,7 @@ select:"M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-9 14
 done:"M12 2a10 10 0 100 20 10 10 0 000-20zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z",
 undo:"M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z",
 image:"M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z",
-reorder:"M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z",open:"M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"};
+reorder:"M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z",tune:"M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z",open:"M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"};
 const I = (p, c) => `<svg viewBox="0 0 24 24" aria-hidden="true"${c ? ` class="${c}"` : ""}><path d="${IC[p]}"/></svg>`;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -35,7 +35,11 @@ const plural = (n, w, p) => `${n} ${n === 1 ? w : p || w + "s"}`;
 const meta = t => [artistsOf(t.a), t.al, t.y].filter(Boolean).join(" · ");
 const spLink = t => (t.f && t.f.sp) || "https://open.spotify.com/search/" + encodeURIComponent((t.t + " " + Core.firstArtist(t.a)).trim());
 let toastT = 0;
-function toast(msg, ms = 4200) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), ms); }
+function toast(msg, ms = 4200, action) {
+  const t = $("#toast"); t.replaceChildren(h("span", { text: msg })); if (action) t.append(btn(action.label, "sm", () => { t.hidden = true; clearTimeout(toastT); action.fn(); }));
+  t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), action ? Math.max(ms, 6500) : ms);
+}
+const langName = t => (t && t.lang && t.lang.src === "lyrics" && t.lang.langs.length ? t.lang.langs.map(l => (Catalog.LANG_NAMES || {})[l] || l).join(" + ") : t && t.lang && t.lang.src === "instrumental" ? "Instrumental" : "");
 function hue(s) { let x = 0; for (const c of String(s)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360; }
 function placeholder(t) { const d = h("div", { class: "ph", "aria-hidden": "true", text: (t.t || "♪").replace(/^[^A-Za-z0-9À-ÿ]+/, "").charAt(0).toUpperCase() || "♪" }); const a = hue(t.id || t.t); d.style.background = `linear-gradient(135deg,hsl(${a} 70% 42%),hsl(${(a + 40) % 360} 80% 28%))`; return d; }
 function coverEl(t) { const src = https(t.cov); if (!src) return placeholder(t); const im = h("img", { src, alt: "", loading: "lazy", decoding: "async", referrerpolicy: "no-referrer" }); im.addEventListener("error", () => im.replaceWith(placeholder(t)), { once: true }); return im; }
@@ -137,12 +141,14 @@ function trackRow(t, o = {}) {
   if (o.sel) { const cb = h("input", { type: "checkbox", class: "ckb", "aria-label": "Select " + t.t }); cb.checked = !!o.sel.checked; cb.onchange = () => o.sel.onchange(cb.checked); row.append(cb); }
   const cv = h("button", { class: "cov", type: "button", "aria-label": "Play sample of " + t.t }, coverEl(t)); const ov = h("span", { class: "ov" }); ov.innerHTML = I("play", "pi") + '<span class="eq"><i></i><i></i><i></i></span>'; cv.append(ov);
   cv.onclick = () => togglePlay(t, o.q, o.ctx);
-  const tx = h("div", {}, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: meta(t) }));
+  const tx = h("div", {}, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: artistsOf(t.a) }));
   if (o.why) tx.append(h("div", { class: "why", text: o.why }));
   if (o.fb) tx.append(h("div", { class: "fb", text: o.fb }));
   const tags = h("div", { class: "tags" }); (o.tags || []).forEach(x => tags.append(x.nodeType ? x : h("span", { class: "tag " + (x.c || ""), text: x.t })));
-  if (t.exp) tags.append(h("span", { class: "tag o", text: t.exp === "explicit" ? "Explicit" : "Clean" }));
+  if (t.y) tags.append(h("span", { class: "tag", text: String(t.y) })); const ln = langName(t); if (ln) tags.append(h("span", { class: "tag", text: ln }));
+  if (t.exp) tags.append(h("span", { class: "tag", text: t.exp === "explicit" ? "Explicit" : "Clean" }));
   tags.append(h("a", { class: "lnk", href: spLink(t), target: "_blank", rel: "noopener noreferrer", text: "Spotify ↗" })); tx.append(tags);
+  if (o.below) tx.append(h("div", { class: "btns", style: "margin:8px 0 0" }, o.below));
   row.append(cv, tx, h("div", { class: "acts" }, o.acts || []));
   if (P.k === t.id) { row.classList.add("cur"); if (!A.paused && !P.loading) row.classList.add("playing"); }
   return row;

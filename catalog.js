@@ -10,7 +10,7 @@ const https = u => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
 function limiter(perSec) { let q = Promise.resolve(), last = 0; const gap = 1000 / perSec; return fn => { const p = q.then(async () => { const w = last + gap - Date.now(); if (w > 0) await sleep(w); last = Date.now(); return fn(); }); q = p.catch(() => {}); return p; }; }
 async function getJSON(url, opt = {}, timeout = 15000) {
   const ac = typeof AbortController !== "undefined" ? new AbortController() : null; const t = ac && setTimeout(() => ac.abort(), timeout);
-  try { const r = await fetch(url, Object.assign({ signal: ac && ac.signal }, opt)); if (!r.ok) { const e = new Error(url.split("?")[0] + " " + r.status); e.status = r.status; throw e; } return await r.json(); }
+  try { const r = await fetch(url, Object.assign({ signal: ac && ac.signal }, opt)); if (!r.ok) { const e = new Error(url.split("?")[0] + " " + r.status); e.status = r.status; e.retryAfter = +(r.headers.get("retry-after") || 0); throw e; } return await r.json(); }
   finally { if (t) clearTimeout(t); }
 }
 const SETTINGS = { country: "us" };
@@ -64,7 +64,9 @@ const Deezer = {
   async top(id, limit = 10) { const d = await dz(`/artist/${id}/top?limit=${limit}`); return ((d && d.data) || []).filter(t => t && t.readable !== false).map(t => this.parse(t)); },
   async genres() { const d = await dz("/genre"); return ((d && d.data) || []).filter(g => g.id).map(g => ({ id: g.id, name: g.name })); },
   async chart(gid, limit = 50) { const d = await dz(`/chart/${gid}/tracks?limit=${limit}`); return ((d && d.data) || []).map(t => this.parse(t)); },
-  async artistByName(name) { const r = await this.artists(name, 3); return r.find(a => mnorm(a.name) === mnorm(name)) || null; },
+  async artistByName(name, minFans = 0) { const r = await this.artists(name, 6); const ex = r.filter(a => mnorm(a.name) === mnorm(name) && a.fans >= minFans).sort((a, b) => b.fans - a.fans); return ex[0] || null; },
+  async playlists(q, limit = 4) { const d = await dz("/search/playlist?q=" + encodeURIComponent(q) + "&limit=" + limit); return ((d && d.data) || []).map(p => ({ id: p.id, title: p.title, n: p.nb_tracks || 0, editor: /deezer/i.test((p.user && p.user.name) || "") })); },
+  async playlistTracks(id, limit = 100) { const d = await dz(`/playlist/${id}/tracks?limit=${limit}`); return ((d && d.data) || []).filter(t => t && t.readable !== false).map(t => this.parse(t)); },
   async find(title, artist) {
     const core = String(title).split(/\s[\(\[]/)[0], fa = Core.firstArtist(artist);
     const extra = t => /[\[(]|\s-\s/.test(String(t).replace(/\((feat|ft|with)[^)]*\)/ig, ""));
@@ -140,16 +142,73 @@ const ReccoBeats = {
 };
 
 /* ---------- verification: AI/pasted picks must map to a real catalog track ---------- */
+/* null = searched and not found; throws OFFLINE when no catalog could be reached, so callers never report "not found" for songs that weren't checked */
 async function resolve(title, artist) {
-  let r = null;
-  try { r = await Deezer.find(title, artist); } catch {}
+  let r = null, fails = 0;
+  try { r = await Deezer.find(title, artist); } catch { fails++; }
   if (r) { try { const full = await Deezer.track(r.dz); if (full) r = full; } catch {} return r; }
-  try { r = await ITunes.find(title, artist); } catch {}
+  try { r = await ITunes.find(title, artist); } catch { fails++; }
+  if (!r && fails === 2) { const e = new Error("offline"); e.code = "OFFLINE"; throw e; }
   return r;
 }
 async function complete(t) { if (t.dz && !t.full) { try { const f = await Deezer.track(t.dz); if (f) return Object.assign(t, f, { full: true }); } catch {} } return t; }
 
-/* ---------- rough language guess from a title (Classic only) ---------- */
+/* ---------- LRCLIB lyrics → language ---------- */
+const lrLimit = limiter(5), lrsLimit = limiter(1.2);
+async function lrGet(url, lim) {
+  for (let i = 0; ; i++) {
+    try { return await lim(() => getJSON(url, {}, 12000)); }
+    catch (e) { if (e.status === 404) return null; if (i >= 3 || !(e.status === 429 || e.status >= 500 || !e.status)) throw e; await sleep(Math.max(1200, (e.retryAfter || 0) * 1000) * (i + 1)); }
+  }
+}
+const LRCLIB = {
+  /* {text, instrumental} when found, null when the song isn't in LRCLIB, undefined when it couldn't be checked right now */
+  async lyrics(t, deep = true) {
+    const title = String(t.t || "").replace(/\s*[\(\[](feat|ft|with)\.?\s[^\)\]]*[\)\]]/ig, "").trim(), artist = Core.firstArtist(t.a), enc = encodeURIComponent;
+    try {
+      const d = await lrGet(`https://lrclib.net/api/get?artist_name=${enc(artist)}&track_name=${enc(title)}${t.dur ? "&duration=" + t.dur : ""}`, lrLimit);
+      if (d) return { text: d.plainLyrics || "", instrumental: !!d.instrumental };
+      if (!deep) return null;
+      const s = await lrGet(`https://lrclib.net/api/search?track_name=${enc(title)}&artist_name=${enc(artist)}`, lrsLimit);
+      const c = (s || []).filter(x => match(title, artist, { t: x.trackName, a: x.artistName })).sort((a, b) => Math.abs((a.duration || 0) - (t.dur || 0)) - Math.abs((b.duration || 0) - (t.dur || 0)))[0];
+      return c ? { text: c.plainLyrics || "", instrumental: !!c.instrumental } : null;
+    } catch { return undefined; }
+  }
+};
+const LANG_NAMES = { es: "Spanish", en: "English", pt: "Portuguese", fr: "French", it: "Italian", de: "German", ko: "Korean", ja: "Japanese", zh: "Chinese", ru: "Russian", ar: "Arabic", hi: "Hindi" };
+const SW = {
+  en: "the and you i my your it is on that this with for we be are what all just like got know when but now up get go she he they do don't can't i'm it's you're to of out down back never need how time way gonna wanna gotta tonight feel make let love night think tell see say only ever where why who been have has had would could should because about over into them their there these those our ain't i'll i've",
+  es: "el los las y pero yo tú tu eres estoy quiero mi muy porque cuando también ahora aquí mucho bien voy ella él nosotros conmigo contigo otra vez bebé noche corazón hoy siempre tengo hace hacer puedo dime mami pa' perreo baila dale ya sola sin con una lo le del al ese esa esto eso así más qué cómo dónde quieres tienes sabes tus mis sus están hay fue vamos mujer calle fiesta mientras después antes nadie nunca todo",
+  pt: "você voce não nao eu meu minha com uma isso é está tá mais então sem pra pro também muito sua seu ele ela nós vai vou tô gente coisa quero sou já olha beijo coração saudade amanhã hoje sempre ninguém alguém tudo agora aqui quando onde fazer tem tenho nossa vamos mim dela dele num numa essa esse nunca todo",
+  fr: "je il elle nous vous les des une est et pas mais moi toi avec pour dans ce qui c'est j'ai oui ne sur au du mon ma ton ta ça comme tout rien suis veux fait plus quand bien aussi encore toujours jamais cœur nuit",
+  it: "il che non sono ti mi ma per della sei io noi voi questo questa quello come cosa perché amore ancora sempre niente più già anche ciao bella cuore notte gli una di da e lo",
+  de: "ich du und nicht die der das ist ein eine mit mich dich mir dir wir ihr sie auf für auch wie was noch nur mein dein liebe immer nacht kein schon aber wenn ja so will in"
+};
+const SWI = new Map(); for (const [l, ws] of Object.entries(SW)) for (const w of ws.split(" ")) { if (!SWI.has(w)) SWI.set(w, []); SWI.get(w).push(l); }
+/* Script share for non-Latin alphabets + function-word frequency for Latin ones. Returns null when there's too little text. */
+function detectLang(text) {
+  const s = String(text || ""); const cnt = re => (s.match(re) || []).length;
+  const sc = { ko: cnt(/[\uac00-\ud7af\u1100-\u11ff]/g), kana: cnt(/[\u3040-\u30ff]/g), han: cnt(/[\u4e00-\u9fff]/g), ru: cnt(/[\u0400-\u04ff]/g), ar: cnt(/[\u0600-\u06ff]/g), hi: cnt(/[\u0900-\u097f]/g) };
+  const latin = cnt(/[a-zà-ÿ]/gi); const share = {};
+  if (sc.ko) share.ko = sc.ko * 2.5; if (sc.kana) share.ja = (sc.kana + sc.han) * 2; else if (sc.han) share.zh = sc.han * 2.5; ["ru", "ar", "hi"].forEach(k => { if (sc[k]) share[k] = sc[k]; });
+  const hits = {}; let sum = 0;
+  for (const w of s.toLowerCase().replace(/[’`]/g, "'").match(/[a-zà-ÿœç']+/g) || []) { const ls = SWI.get(w); if (!ls) continue; ls.forEach(l => (hits[l] = (hits[l] || 0) + 1 / ls.length)); sum++; }
+  if (sum >= 6) for (const [l, n] of Object.entries(hits)) share[l] = (share[l] || 0) + latin * (n / sum);
+  const tot = Object.values(share).reduce((a, b) => a + b, 0); if (!tot || (sum < 6 && tot < 20)) return null;
+  const ranked = Object.entries(share).map(([l, n]) => [l, n / tot]).sort((a, b) => b[1] - a[1]);
+  return { main: ranked[0][0], langs: ranked.filter(([, x]) => x >= 0.2).slice(0, 3).map(([l]) => l), conf: ranked[0][1] };
+}
+async function languageOf(t, deep = true) {
+  if (t.lang && (t.lang.src !== "unknown" || !deep || t.lang.deep)) return t.lang;
+  const ly = await LRCLIB.lyrics(t, deep);
+  if (ly === undefined) return null;
+  if (ly && ly.instrumental) return (t.lang = { main: null, langs: [], src: "instrumental" });
+  const d = ly && ly.text ? detectLang(ly.text) : null;
+  if (d) return (t.lang = { main: d.main, langs: d.langs, src: "lyrics" });
+  const g = guessLang(t.t); return (t.lang = g ? { main: g, langs: [g], src: "title", deep } : { main: null, langs: [], src: "unknown", deep });
+}
+
+/* ---------- language hint from a title, used only when a song has no lyrics on file ---------- */
 const LW = {
   es: "el la los las de del que mi tu te me se yo amor corazon noche baila bailar perreo quiero dime sin con por para como eres vida dale mami papi bebe nena loco loca solo una uno otra vez todo nada fuego calor besos beso cuerpo luna cielo hoy ahora siempre nunca mas tiempo pa ella el".split(" "),
   en: "the you me my your i im love baby girl boy night dance it is on in of to and we all up down get got like just dont cant wanna gonna feel time back go no yeah oh".split(" "),
@@ -163,7 +222,7 @@ function guessLang(title) {
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];
 }
 
-const API = { SETTINGS, limiter, sleep, https, getJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, ReccoBeats, resolve, complete, guessLang };
+const API = { SETTINGS, limiter, sleep, https, getJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
 G.Catalog = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

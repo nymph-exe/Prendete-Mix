@@ -39,9 +39,12 @@ function dirDetails(pl) {
   const refs = (d.refs || []).map(getTrack).filter(Boolean); if (refs.length) lines.push("Sounds like: " + refs.map(t => `${t.t} — ${artistsOf(t.a)}`).join("; "));
   if ((d.artists || []).length) lines.push("Reference artists: " + d.artists.map(a => a.name).join(", "));
   const must = pl.order.filter(x => pl.rels[x].mandatory).length; if (must) lines.push(`Must-include: ${must} song${must === 1 ? "" : "s"}`);
-  const tr = []; if ((f.genres || []).length) tr.push(f.genres.map(g => g.name).join(", ")); if ((f.moods || []).length) tr.push(f.moods.join(", ")); if (f.energy) tr.push(f.energy + " energy"); if (f.tempo) tr.push(f.tempo + " tempo");
-  if (f.era) tr.push(`${f.era[0]}–${f.era[1]}`); if ((f.langs || []).length) tr.push(f.langs.map(k => (LANGS.find(x => x[0] === k) || [k, k])[1]).join(", ")); if (f.explicit === "clean") tr.push("clean only"); if (f.explicit === "explicit") tr.push("explicit preferred");
-  if (f.avoidHits) tr.push("no most-played hits"); tr.push(f.versions ? "versions OK" : "original versions only"); lines.push(tr.join(" · "));
+  const ln = k => (LANGS.find(x => x[0] === k) || [k, k])[1];
+  const tr = []; if ((f.genres || []).length) tr.push(f.genres.map(g => g.name).join(", ")); if ((f.keywords || []).length) tr.push(f.keywords.join(", ")); if ((f.moods || []).length) tr.push(f.moods.join(", ").toLowerCase()); if (f.energy) tr.push(f.energy + " energy");
+  if (Array.isArray(f.bpm) && f.bpm[0]) tr.push(`${f.bpm[0]}–${f.bpm[1]} BPM`); else if (f.tempo) tr.push(f.tempo + " tempo");
+  if (f.era) tr.push(`${f.era[0]}–${f.era[1]}`); if ((f.langs || []).length) tr.push("in " + f.langs.map(ln).join(" or ")); if ((f.notLangs || []).length) tr.push("nothing in " + f.notLangs.map(ln).join(" or "));
+  if (f.explicit === "clean") tr.push("clean only"); if (f.explicit === "explicit") tr.push("explicit preferred");
+  if (f.avoidHits) tr.push("skipping the most-played hits"); if (f.preferHits) tr.push("leaning popular"); tr.push(f.versions ? "other versions OK" : "original versions only"); lines.push(tr.join(", "));
   if ((ex.artists || []).length) lines.push("Never: " + ex.artists.join(", ")); if ((ex.songs || []).length) lines.push(`Never include: ${ex.songs.length} song${ex.songs.length === 1 ? "" : "s"}`);
   return h("div", {}, lines.map(l => h("p", { class: "small", style: "margin:2px 0", text: l })));
 }
@@ -69,7 +72,7 @@ function fixDir(d) { const e = emptyDir(); d = Object.assign(e, clone(d || {}));
 function directionSheet(id) {
   const pl = S.pls.get(id);
   const st = { dir: fixDir(pl.direction), must: [], mustLocked: pl.order.filter(x => pl.rels[x].mandatory), unmust: [] };
-  sheet({ title: "Edit creative direction", cls: "tall", build: close => [h("p", { class: "lede", text: "Changes guide future Recalibrate and Random fill. Nothing runs by itself." }), dirEditor(st, "edit"),
+  sheet({ title: "Edit creative direction", cls: "tall", build: close => [h("p", { class: "lede", text: "Changes guide future Recalibrate and Random fill. Nothing runs by itself." }), dirEditor(st, "edit", { engine: () => S.pls.get(id).engine }),
     h("div", { class: "foot" }, btn("Cancel", "ghost", () => close()), btn("Save", "red", () => { close(); saveDirection(id, st); }))] });
 }
 function saveDirection(id, st) {
@@ -109,11 +112,11 @@ async function deletePlaylist(id) {
 
 /* ---------- global settings ---------- */
 function vSettings(v) {
-  setTop("Settings", "Everything is saved in this browser", "#/");
+  setTop("Settings", h("span", { text: "Everything is saved in this browser" }), "#/");
   const m = h("main", { class: "wrap" }); v.append(m);
   const ai = h("div", { class: "card" }, h("h2", { class: "sec", text: "AI connections" }), h("p", { class: "lede", text: "Keys stay in this browser and are only sent to that service. Each playlist chooses Classic or AI in its own Settings." }));
   for (const [k, p] of Object.entries(Engines.PROVIDERS)) {
-    if (p.wip) { ai.append(h("div", { class: "prov" }, h("div", { class: "nm" }, p.label, h("span", { class: "tag y", text: "Work in progress" })), h("p", { class: "small", text: `Will use your own ${k === "claude" ? "Claude" : "ChatGPT"} subscription, with no API key and no extra cost, through a connector in the ${k === "claude" ? "Claude" : "ChatGPT"} app. Not available yet.` }))); continue; }
+    if (p.wip) { ai.append(h("div", { class: "prov" }, h("div", { class: "nm" }, p.label, h("span", { class: "tag y", text: "Work in progress" })), h("p", { class: "small", text: `Coming next: your own ${k === "claude" ? "Claude" : "ChatGPT"} subscription, with no API key and no extra cost, through a connector in the ${k === "claude" ? "Claude" : "ChatGPT"} app.` }))); continue; }
     const a = S.meta.ai[k] || {}; const key = h("input", { type: "password", autocomplete: "off", placeholder: a.key ? "Key saved · paste a new one to replace it" : "Paste your key", "aria-label": p.label + " key" });
     const stat = h("p", { class: "small", "aria-live": "polite", text: a.key ? `Connected · ${plural((a.models || []).length, "model")} available${a.model ? ` · default ${a.model}` : ""}` : "Not set up" });
     const save = async () => { const v2 = key.value.trim() || a.key; if (!v2) return toast("Paste a key first."); stat.textContent = "Checking the key…";
@@ -123,9 +126,8 @@ function vSettings(v) {
       h("div", { class: "inl" }, key, btn(a.key ? "Check again" : "Save key", "sm", save), a.key ? btn("Remove", "ghost sm", async () => { delete S.meta.ai[k]; await saveMeta().catch(() => {}); toast("Key removed."); render(); }) : null), stat));
   }
   m.append(ai);
-  const never = S.meta.never.slice();
-  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Never suggest" }), h("p", { class: "lede", text: "Artists no playlist should ever suggest, as lead or featured. This is your own list, not something learned from playlists." }),
-    namesEditor(never, "Artists", "Artist name"), btn("Save list", "", async () => { S.meta.never = never.slice(); await act(() => saveMeta(), "Saved."); })));
+  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Never suggest" }), h("p", { class: "lede", text: "Artists no playlist should ever suggest, as lead or featured. This is your own list, not something learned from playlists. Changes save right away." }),
+    namesEditor(S.meta.never, "Artists", "Artist name", () => act(() => saveMeta(), "Saved."))));
   const cc = h("select", { "aria-label": "Apple Music store", onchange: e => { S.meta.country = e.target.value; Catalog.SETTINGS.country = e.target.value; saveMeta().catch(() => {}); toast("Saved."); } });
   [["us", "United States"], ["pa", "Panamá"], ["mx", "México"], ["es", "España"], ["co", "Colombia"], ["pr", "Puerto Rico"], ["ar", "Argentina"], ["br", "Brasil"], ["gb", "United Kingdom"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === S.meta.country) o.selected = true; cc.append(o); });
   const an = h("input", { type: "checkbox", onchange: e => { S.meta.autoNext = e.target.checked; saveMeta().catch(() => {}); } }); an.checked = !!S.meta.autoNext;
@@ -175,7 +177,7 @@ function engineFor(pl) {
   const e = pl.engine || { mode: "classic" };
   if (e.mode !== "ai") return { impl: Engines.Classic };
   const p = Engines.PROVIDERS[e.provider];
-  if (!p || p.wip) return { err: `${p ? p.label : "That AI"} is still a work in progress. Pick Gemini or OpenRouter, or switch this playlist to Classic.` };
+  if (!p || p.wip) return { err: `${p ? p.label : "That AI connection"} is coming next. For now pick Gemini or OpenRouter, or switch this playlist to Classic.` };
   if (!aiReady(e.provider)) return { err: `Add your ${p.label} key in Settings, or switch this playlist to Classic.` };
   return { impl: Engines.AI, ai: aiCtx(e) };
 }
@@ -225,6 +227,17 @@ async function startJob(id, kind) {
   } finally { S.jobs.delete(id); if (S.pls.has(id)) refresh(id); }
 }
 
+/* ---------- quiet background job: language tags for songs already in playlists (lyrics via LRCLIB) ---------- */
+async function backfillLanguages() {
+  const ids = new Set(); for (const pl of S.pls.values()) for (const k in pl.rels) if (pl.rels[k].state !== "REJECTED") ids.add(k);
+  const need = [...ids].map(getTrack).filter(t => t && !t.lang).slice(0, 400);
+  for (let i = 0; i < need.length; i += 10) {
+    if (document.hidden || !navigator.onLine) { await sleep(5000); i -= 10; continue; }
+    if (S.jobs.size) { await sleep(3000); i -= 10; continue; }
+    await Engines.langsFor(need.slice(i, i + 10), saveTracks, false); await sleep(1200);
+  }
+}
+
 /* ---------- first run: migrate Préndete (Section 19) ---------- */
 async function firstRun() {
   const seed = await fetch("seed.json", { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error("seed " + r.status); return r.json(); });
@@ -254,6 +267,7 @@ async function boot() {
   S.meta.order = S.meta.order.filter(id => S.pls.has(id)).concat([...S.pls.keys()].filter(id => !S.meta.order.includes(id)));
   Catalog.SETTINGS.country = S.meta.country;
   S.route = parseRoute(); render(true);
+  setTimeout(backfillLanguages, 4000);
   if (DB.mode === "ls") toast("This browser blocks the app's database, so it's using simpler storage with less room. Save backups often.", 7000);
 }
 boot();
