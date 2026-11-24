@@ -13,7 +13,7 @@ const { Deezer, ReccoBeats, ListenBrainz, MusicBrainz } = Cat;
 const NEUTRAL = new Set(["Prefer another song", "Redundant selection"]);
 const MOODS = {
   Party: { d: [.62, 1], e: [.5, 1] }, Hype: { e: [.75, 1] }, Danceable: { d: [.7, 1] }, "Feel-good": { v: [.55, 1] }, Chill: { e: [0, .55] },
-  Romantic: { e: [0, .7], v: [.3, .85] }, Sad: { v: [0, .4] }, Dark: { v: [0, .38] }, Sensual: { d: [.6, 1], e: [.35, .8] },
+  Romantic: { e: [0, .7], v: [.3, .85] }, Sad: { v: [0, .4], e: [0, .62] }, Dark: { v: [0, .38] }, Sensual: { d: [.6, 1], e: [.35, .8] },
   Workout: { e: [.65, 1] }, Focus: { e: [0, .6], ac: [.15, 1] }
 };
 const ENERGY = { low: [0, .5], medium: [.4, .75], high: [.65, 1] };
@@ -44,9 +44,20 @@ function rules(pl, never) {
 /* "Never suggest": IDs decide; exact full names only where there's no ID to compare (see artists.js) */
 function blocked(t, R) { return Arts.banned(t, R.block); }
 /* language: decided from the lyrics when LRCLIB has them; instrumentals pass; unknown songs are kept but ranked lower */
+/* where an artist comes from (MusicBrainz area, via ListenBrainz) hints at the language they sing in: used only when a
+   song's lyrics aren't on file. A hint alone ranks a song lower; a hint that agrees with the title's language rules it out. */
+const AREA_LANG = (() => { const m = new Map(); const add = (l, s) => s.split("|").forEach(n => m.set(n, l));
+  add("en", "united states|united kingdom|england|scotland|wales|northern ireland|ireland|canada|australia|new zealand|jamaica|trinidad and tobago|barbados|los angeles|new york|atlanta|chicago|houston|detroit|london|manchester|toronto|nashville|memphis|philadelphia|compton|brooklyn|seattle");
+  add("es", "mexico|spain|argentina|colombia|chile|peru|venezuela|puerto rico|cuba|dominican republic|panama|ecuador|uruguay|paraguay|bolivia|costa rica|guatemala|honduras|el salvador|nicaragua|medellín|bogotá|cali|barranquilla|san juan|carolina|buenos aires|madrid|barcelona|santiago|lima|mexico city|ciudad de méxico|monterrey|guadalajara|caracas|panama city|santo domingo|culiacán|tijuana");
+  add("pt", "brazil|portugal|angola|mozambique|cape verde|são paulo|rio de janeiro|belo horizonte|salvador|recife|lisbon");
+  add("fr", "france|monaco|senegal|haiti|paris|marseille"); add("ko", "south korea|korea|seoul|busan"); add("ja", "japan|tokyo|osaka"); add("de", "germany|austria|berlin|hamburg"); add("it", "italy|rome|milan");
+  add("zh", "china|taiwan|hong kong"); add("ru", "russia|moscow"); add("tr", "turkey|istanbul"); return m; })();
+const areaLang = t => { const a = ART.get((t.aid || [])[0]); return a && a.area ? AREA_LANG.get(String(a.area).toLowerCase()) || null : null; };
 function langVerdict(t, R) {
   if (!R.langs.length && !R.notLangs.length) return "ok";
-  const L = t.lang; if (!L || !L.src || L.src === "unknown") return "unknown"; if (L.src === "instrumental") return "ok";
+  const L = t.lang, al = areaLang(t), other = l => !!l && ((R.langs.length > 0 && !R.langs.includes(l)) || R.notLangs.includes(l));
+  if (!L || !L.src || L.src === "unknown") return other(al) ? "doubt" : "unknown"; if (L.src === "instrumental") return "ok";
+  if (L.src === "title" && other(L.main) && other(al)) return "no";
   const sure = L.src === "lyrics";
   if (R.notLangs.length && L.main && R.notLangs.includes(L.main)) return sure ? "no" : "doubt";
   if (R.langs.length && !L.langs.some(l => R.langs.includes(l))) return sure ? "no" : "doubt";
@@ -132,9 +143,32 @@ async function buildProfile(ctx, say) {
       tr.forEach(t => { (t.aid || []).slice(0, 1).forEach(id => add(id, names(t)[0], .5, "genre")); pool.push(Object.assign(t, { _why: `On the ${g.name} charts` })); }); } catch { fails++; }
   }
   const qs = []; const gn = (f.genres || []).map(g => g.name.replace(/\/.*$/, "")); const kw = (f.keywords || []).slice(0, 3);
+  /* a bare mood word finds the wrong playlists ("Romantic" is classical music's Romantic era): search the phrase people use */
+  const esText = /\b(canciones|musica|música|para|del|años|que|con|sin|de los)\b/i.test(R.dir.text || "");
+  const MQ = m => (esText ? { Sad: "canciones tristes", Romantic: "canciones de amor", Chill: "música relajante", Party: "fiesta", "Feel-good": "canciones alegres", Workout: "música para entrenar", Focus: "música para concentrarse", Danceable: "música para bailar", Hype: "música con energía", Dark: "música oscura", Sensual: "música sensual" }
+    : { Sad: "sad songs", Romantic: "love songs", Chill: "chill vibes", Party: "party hits", "Feel-good": "feel good hits", Workout: "workout hits", Focus: "focus music", Danceable: "dance hits", Hype: "hype songs", Dark: "dark music", Sensual: "sensual songs" })[m] || m;
   kw.forEach(k => qs.push(moods.length ? `${k} ${moods[0]}` : k));
-  if (moods.length && gn.length) gn.slice(0, 2).forEach(g => qs.push(`${g} ${moods[0]}`)); else if (moods.length) moods.slice(0, 2).forEach(m => qs.push(m)); else gn.slice(0, 2).forEach(g => qs.push(g));
+  if (moods.length && gn.length) gn.slice(0, 2).forEach(g => qs.push(`${g} ${moods[0]}`)); else if (moods.length) moods.slice(0, 2).forEach(m => qs.push(MQ(m))); else gn.slice(0, 2).forEach(g => qs.push(g));
+  /* an occasion with no genre named ("wedding party hits"): Deezer's playlists for that occasion know the songs everyone knows */
+  const occ = !genres.length && !(f.keywords || []).length ? String(R.dir.text || "").match(/\b(wedding|boda|road ?trip|karaoke|sing-?along|bbq|barbecue|carne asada|graduation|graduaci[oó]n|quincea[nñ]era|birthday|cumplea[nñ]os|baby shower|pool party|beach party|house party|family party|fiesta familiar)\b/i) : null;
+  if (occ) qs.unshift(`${occ[1].toLowerCase()} ${R.crowd || R.preferHits ? "hits" : "party"}`);
+  /* crowd-pleasers with no style, artist or song named: Deezer's occasion playlists are mostly new dance remixes of old hits,
+     so the mainstream scenes (see scenesFor) lead instead */
+  const crowdOnly = R.crowd && !genres.length && !(f.keywords || []).length && !refs.length && !(R.dir.artists || []).length && !ev.manual.length;
+  if (crowdOnly) qs.length = 0;
   if (R.langs.length === 1 && qs.length) qs[0] = qs[0] + " " + ({ es: "latino", pt: "brasil", fr: "français", it: "italiano", de: "deutsch", ko: "k-pop", ja: "j-pop" }[R.langs[0]] || "");
+  /* no genre, style or mood named ("songs from 2016", "songs in Korean", "high energy songs"): start from Deezer's
+     playlists for the years, the language or the feel that was asked for */
+  if (!qs.length && !crowdOnly && !genres.length && !(R.dir.refs || []).length && !(R.dir.artists || []).length && !ev.manual.length) {
+    const L = R.langs.length === 1 ? R.langs[0] : null, era = R.era;
+    const LQ = { es: "éxitos en español", pt: "sucessos brasileiros", fr: "hits français", it: "hit italiane", de: "deutsche hits", ko: "korean hits", ja: "japanese hits", hi: "bollywood hits", ar: "arabic hits", tr: "türkçe pop", ru: "русские хиты", zh: "chinese pop", en: "hits" };
+    const mid = era ? Math.floor((Math.max(era[0], 1950) + Math.min(era[1], new Date().getFullYear())) / 2) : null;
+    const when = !era ? "" : era[0] === era[1] ? String(era[0]) : mid < 2000 ? `${String(mid).slice(2, 3)}0s` : `${Math.floor(mid / 10) * 10}s`;
+    const feel = f.energy === "high" ? (esText ? "música movida" : "upbeat hits") : f.energy === "low" ? (esText ? "música tranquila" : "chill songs") : f.tempo === "fast" ? (esText ? "música movida" : "upbeat hits") : f.tempo === "slow" ? (esText ? "canciones lentas" : "slow songs") : R.crowd ? "party hits" : R.gems ? "underground" : "";
+    const lq = L ? LQ[L] || "" : "";
+    [[when, lq || "hits"], [feel, when, L ? lq : ""], [lq]].forEach(parts => { const q = parts.filter(Boolean).join(" ").trim(); if (q && q !== "hits") qs.push(q); });
+    if (!qs.length && when) qs.push(when + " hits");
+  }
   for (const q of longHistory ? [] : [...new Set(qs)].slice(0, 3)) {
     if (ctx.stopped && ctx.stopped()) break;
     try { say && say(`Browsing “${q.trim()}” playlists…`); const pls = (await Deezer.playlists(q.trim(), 6)).filter(p => p.n >= 15).sort((a, b) => b.editor - a.editor).slice(0, 2);
@@ -164,7 +198,11 @@ async function buildProfile(ctx, say) {
   const moodT = moods.map(m => MOODS[m]).filter(Boolean);
   /* release years the user tends to approve here (with 15+ approvals): far outside them ranks lower */
   const ys = ev.manual.map(t => t.y).filter(Boolean).sort((a, b) => a - b); const yr = ys.length >= 15 ? { lo: ys[Math.floor(ys.length * .15)], hi: ys[Math.floor(ys.length * .85)] } : null;
-  return { fails, pl, R, ev, refs, W, avoid, doubt, negIds, pool: pool.sort(() => Math.random() - .5).slice(0, 400), prof, pat, tgt, moodT, yr, epoch: pl.epoch };
+  /* a request with no genre, artist, song or language ("songs from 2016"): Deezer's playlists for it lean French, so songs
+     in a language other than the request's own (English or Spanish) rank lower. Never a filter. */
+  const seedless = !genres.length && !(f.keywords || []).length && !refs.length && !(R.dir.artists || []).length && !ev.manual.length && !R.langs.length;
+  const home = seedless ? (/\b(canciones|musica|música|de los|para|del|años|que|con|sin)\b/i.test(R.dir.text || "") ? ["es", "en"] : ["en", "es"]) : null;
+  return { fails, pl, R, ev, refs, W, avoid, doubt, negIds, pool: pool.sort(() => Math.random() - .5).slice(0, 400), prof, pat, tgt, moodT, yr, home, epoch: pl.epoch };
 }
 function fitOf(t, P) {
   const f = t.f; if (!f || f.none) return { fit: .5, known: false };
@@ -191,6 +229,14 @@ function learnedOut(t, P) {
   if (P.pat.fast.length >= 2 && b && b >= median(P.pat.fast)) return true;
   return false;
 }
+/* language-free requests: a song clearly in another language (its lyrics, or its artist's country and its title agreeing) is left out */
+const CLASSICAL = /\b(Op\. ?\d|K\. ?\d{2,3}|BWV|WoO|Hob\.|Sonata|Concerto|Symphony|Symphonie|Quintet|Quartet|Nocturne|Pr[eé]lude|[EÉ]tude|Hungarian Dance|Adagio|Allegr(o|etto)|Andante)\b/i;
+function homeOut(t, P) {
+  if (!P.home || (t.lang && t.lang.src === "instrumental")) return false; const L = t.lang;
+  if (L && L.src === "lyrics" && L.main) return !P.home.includes(L.main);
+  /* the artist's country decides unless the title says the song is in the request's language */
+  const al = areaLang(t), tg = (L && L.main) || Cat.guessLang(t.t); return !!(al && !P.home.includes(al) && !(tg && P.home.includes(tg)));
+}
 function penalty(t, P) {
   let p = 0; const f = t.f && !t.f.none ? t.f : null;
   if (f) {
@@ -204,6 +250,8 @@ function penalty(t, P) {
   if (P.pat.overplayed && ((pop != null && pop >= 80) || (t.rank || 0) >= 800000)) p += P.pat.overplayed >= 2 ? .8 : .4;
   if (P.pat.niche >= 2 && (t.rank || 0) < 60000 && (pop == null || pop < 35)) p += .4;
   const lv = langVerdict(t, P.R); if (lv === "doubt") p += .8; else if (lv === "unknown") p += .25;
+  /* a soft preference, so it uses what's already known (lyrics language, the artist's country, the title) instead of fetching lyrics */
+  if (P.home && !(t.lang && t.lang.src === "instrumental")) { const l = (t.lang && t.lang.main) || areaLang(t) || Cat.guessLang(t.t); if (l && !P.home.includes(l)) p += t.lang && t.lang.src === "lyrics" ? .7 : .4; }
   if (P.R.preferHits) p -= .4 * Math.min(1, (t.rank || 0) / 800000) + (pop != null && pop >= 70 ? .2 : 0);
   return p;
 }
@@ -318,14 +366,20 @@ async function discogsFill(list, budget) {
   artSave();
 }
 /* which scenes this playlist is about: named styles, reference artists, and (for long histories) where its approvals live */
+const REGION = [[/\b(chilean|chileno|spanish|espa(n|ñ)ol|mexican[oa]?|argentin[eao]|latin[oa]?|colombian[oa]?|puerto ?rican|dominican[oa]?|cuban[oa]?)\b/, "es"], [/\b(brazilian|brasileir[oa]|portugu[eê]s)\b/, "pt"], [/\b(french|fran(c|ç)ais)\b/, "fr"], [/\b(korean|k-)/, "ko"], [/\b(japanese|j-)/, "ja"], [/\b(german|deutsch)\b/, "de"], [/\b(italian[oa]?)\b/, "it"], [/\b(uk|british|london)\b/, "uk"]];
+function offRegion(tag, want, R) { for (const [re, l] of REGION) if (re.test(tag)) return !re.test(want) && !(R.langs || []).includes(l) && !(l === "uk" && /\b(uk|british|london|grime|drill)\b/i.test(String(R.dir && R.dir.text || ""))); return false; }
 function scenesFor(P, S) {
   const W = new Map(); if (!SC) return W; const add = (k, w) => W.set(k, (W.get(k) || 0) + w);
   const era = P.R.era, overlap = sc => !era || !sc.era || (sc.era[0] <= era[1] && sc.era[1] >= era[0]);
   for (const sc of Object.values(SC.SCENES)) {
-    let m = 0; for (const p of S.want) for (const t of sc.tags) m = Math.max(m, tagSim(p, t));
+    /* a scene's first tag is what it is; a looser match on one of its other tags ("electro house" in EDM for "house") counts less */
+    /* a regional scene ("chilean trap", "uk hip hop") answers a plain "trap" or "hip hop" only when the request points there */
+    let m = 0; for (const p of S.want) sc.tags.forEach((t, i) => { let v = tagSim(p, t); if (v < 1 && (i > 0 || offRegion(t, p, P.R))) v *= .85; m = Math.max(m, v); });
     if (!S.want.length) for (const p of S.broad) for (const t of sc.tags.slice(0, 2)) m = Math.max(m, .6 * tagSim(p, t));
     if (m >= .85 || (!S.want.length && m >= .5)) add(sc.key, m * (overlap(sc) ? 1 : .15));
   }
+  /* crowd-pleasers with no style named ("wedding hits everyone knows"): the mainstream scenes everyone knows */
+  if (!S.want.length && P.R.crowd && !P.refs.length && !(P.R.dir.artists || []).length && !P.ev.manual.length) for (const k of ["pop_2010s", "pop_2000s", "funk_disco", "latin_pop", "rnb_2000s", "pop_now"]) if (SC.SCENES[k]) add(k, .8);
   /* the artists the user named say the most: their scenes */
   const named = [...P.refs.map(t => (t.aid || [])[0]), ...(P.R.dir.artists || []).map(a => a.id)].filter(Boolean);
   const nm = new Map(); for (const id of named) for (const { key, tier } of kbOf(id)) nm.set(key, (nm.get(key) || 0) + (tier === "core" ? 1 : .8));
@@ -383,10 +437,11 @@ function styleFit(id, S) {
 /* hard style gate: off-genre artists are skipped; artists with no tags pass only when they came in through a source we trust */
 function styleGate(sf, S, trusted) {
   if (!S.info) return true;
-  if (sf.known) { if (sf.no) return false; if (S.strict) return sf.wf >= .45; return !(sf.fit < .1 && sf.n >= 3); }
+  /* no style to compare with (a crowd-pleaser request with only scenes): known tags can't rule anyone out */
+  if (sf.known) { if (sf.no) return false; if (S.strict) return sf.wf >= .45; return sf.fit == null || !(sf.fit < .1 && sf.n >= 3); }
   return S.strict ? !!trusted : true;
 }
-const styleScore = (sf, S) => (!S.info ? .5 : sf.known ? sf.fit : S.strict ? .4 : .5);
+const styleScore = (sf, S) => (!S.info ? .5 : sf.known && sf.fit != null ? sf.fit : S.strict ? .4 : .5);
 
 /* ---------- Classic engine ---------- */
 const Classic = {
@@ -395,7 +450,7 @@ const Classic = {
     const say = opt.onProgress || (() => {}), stop = () => opt.stopped && opt.stopped();
     const P = await buildProfile(Object.assign({ stopped: opt.stopped }, ctx), say); MBQ.n = 0;
     const S = await styleProfile(P, ctx, say); MBQ.n = 6;
-    if (!P.W.size && !P.pool.length && !S.want.length) {
+    if (!P.W.size && !P.pool.length && !S.want.length && !(S.scenes && S.scenes.size)) {
       if (P.fails) throw new Core.OpError("OFFLINE", "Couldn't reach Deezer to look for songs. Check your connection and try again. Nothing changed.");
       throw new Core.OpError("NO_SEEDS", "Add a genre, style, mood, artist or song to this playlist's direction (or approve a few songs) so Classic has a starting point.");
     }
@@ -437,9 +492,12 @@ const Classic = {
       await Promise.all(top.map(async g => { if (stop()) return; try { const a = await Deezer.artistByName(g.n, 300); if (a) addC(a.id, a.name, base * .5 * g.s / top[0].s, Core.firstArtist(g.from.a), "lbrec", .45, g.from.t, a.fans); } catch {} }));
     })().catch(() => {});
     // the style itself: songs carrying the requested genre tag on ListenBrainz → their artists (a deep-cuts window when hits are unwanted)
+    /* no style named but a mood is: listeners' own mood tags on ListenBrainz ("sad", "melancholic") find songs that really have that mood */
+    const MOOD_TAGS = { Sad: ["sad", "melancholic"], Chill: ["chill", "chillout"], Romantic: ["love songs", "ballad"], Dark: ["dark"], "Feel-good": ["happy", "feel good"], Hype: ["energetic"], Sensual: ["sensual", "sexy"], Workout: ["energetic"], Focus: ["instrumental", "study"] };
+    const moodTags = S.want.length || P.R.crowd ? [] : [...new Set((P.R.form.moods || []).flatMap(m => MOOD_TAGS[m] || []))].slice(0, 3);
     const tagJob = (async () => {
-      if (!S.want.length || stop()) return; say(`Looking up ${S.want.slice(0, 2).join(" and ")} artists…`);
-      const pop = P.R.avoidHits ? [0, 55] : P.R.preferHits ? [60, 100] : [15, 100]; const tags = S.want.filter(t => t !== "chillhop" && t !== "jazz hop").slice(0, 3);
+      if ((!S.want.length && !moodTags.length) || stop()) return; say(`Looking up ${(S.want.length ? S.want : moodTags).slice(0, 2).join(" and ")} artists…`);
+      const pop = P.R.avoidHits ? [0, 55] : P.R.preferHits ? [60, 100] : [15, 100]; const tags = S.want.length ? S.want.filter(t => t !== "chillhop" && t !== "jazz hop").slice(0, 3) : moodTags;
       const res = await Promise.all(tags.map(tg => Cat.LB.byTag([tg], { popBegin: pop[0], popEnd: pop[1], count: 60 })));
       const recTag = new Map(); res.forEach((r, i) => r.forEach(x => { if (!recTag.has(x.rec)) recTag.set(x.rec, tags[i]); }));
       const meta = await Cat.LB.meta([...recTag.keys()].slice(0, 150)); const cnt = new Map();
@@ -504,8 +562,12 @@ const Classic = {
     let eraBudget = 16;
     const eraCheck = async list => { await stylesFor(list.map(x => x.t)); const era = P.R.era;
       await Promise.all(list.map(async x => { const a = ART.get((x.t.aid || [])[0]) || {};
-        if (a.by && (a.by > era[1] || a.by < era[0] - 25)) { x.eraOut = true; return; }
-        if (a.by && a.by < era[0] - 10 && eraBudget > 0) { eraBudget--; const y = await MusicBrainz.firstYear(x.t.t, x.t.a).catch(() => null); if (y && y < x.t.y) { x.t.y = y; if (y < era[0] || y > era[1]) x.eraOut = true; } } })); };
+        /* ListenBrainz's "begin" is a birth year for a person and a founding year for a group: careers start about 20 years after birth */
+        const start = a.by ? a.by + (a.type === "Person" ? 20 : 0) : null;
+        if (start && (start > era[1] || start < era[0] - 30)) { x.eraOut = true; return; }
+        /* a song dated after the era by an artist who was already active in it is often a reissue: ask MusicBrainz for its first release */
+        const reissue = start && start <= era[1] && x.t.y && x.t.y > era[1];
+        if (start && (start < era[0] - 10 || reissue) && eraBudget > 0) { eraBudget--; const y = await MusicBrainz.firstYear(x.t.t, x.t.a).catch(() => null); if (y && y < x.t.y) { x.t.y = y; if (y < era[0] || y > era[1]) x.eraOut = true; } } })); };
     const alang = new Map(); const noteLang = t => { const L = t && t.lang; if (!L || L.src !== "lyrics" || !L.main) return; const a = primary(t); const c = alang.get(a) || { n: 0, by: {} }; c.n++; c.by[L.main] = (c.by[L.main] || 0) + 1; const [m, k] = Object.entries(c.by).sort((u, v) => v[1] - u[1])[0]; c.main = m; c.top = k; alang.set(a, c); };
     Object.keys(latest.rels).forEach(k => noteLang(ctx.getTrack(k)));
     let buf = [];
@@ -528,12 +590,15 @@ const Classic = {
       const sc = b.filter(x => !x.eraOut && styleOk(x) && !eligible(x.t, P.R, ctx.getTrack)).map(x => { const { fit, known, asked, est } = fitOf(x.t, P); const pen = penalty(x.t, P);
         const negP = (P.doubt.has(primary(x.t)) ? .5 : 0) + .25 * Math.min(2, NEG.get((x.t.aid || [])[0]) || 0);
         const km = (broadTaste ? .5 : 1) * (S.scenes && S.scenes.size ? kbOf((x.t.aid || [])[0]).reduce((u, { key, tier }) => Math.max(u, (S.scenes.get(key) || 0) * (tier === "core" ? (P.R.gems ? .1 : .3) : (P.R.gems ? .4 : .25))), 0) : 0);
-        const crowdB = P.R.crowd ? .45 * Math.min(1, (x.t.rank || 0) / 600000) - (x.t.exp === "explicit" ? .25 : 0) : 0;
+        /* crowd-pleasers: songs most people know, clean when possible; little-known songs are a poor fit for a wedding */
+        const crowdB = P.R.crowd ? .8 * Math.min(1, (x.t.rank || 0) / 700000) - ((x.t.rank || 0) < 250000 ? .35 : 0) - (x.t.exp === "explicit" ? .25 : 0) : 0;
         const refB = isRef(x.t) ? .3 : 0; const yd = P.yr && x.t.y ? (x.t.y < P.yr.lo ? P.yr.lo - x.t.y : x.t.y > P.yr.hi ? x.t.y - P.yr.hi : 0) : 0; const yearP = .12 * Math.min(4, yd);
         const wi = wantIdx(x.t); const mix = S.balance && wi >= 0 && (WC[wi] || 0) < (found + 1) / S.want.length ? .35 : 0;
         /* unless hits are unwanted, a scene's well-known songs are the safer picks */
         const hot = P.R.avoidHits ? .6 * Math.max(0, Math.min(1, ((x.t.rank || 0) - (P.R.gems ? 250000 : 450000)) / 400000)) : P.R.preferHits ? 0 : -.25 * Math.min(1, (x.t.rank || 0) / 700000);
-        return Object.assign(x, { fit, wi, s: .7 * (x.as / maxScore) + 1.1 * fit + SW * styleScore(x.sf || {}, S) + .25 * Math.random() - pen - hot + mix + refB - yearP - negP + km + crowdB, ok: !(known && fit < (isRef(x.t) && !P.moodT.length ? .3 : asked ? .42 : .35) - (est ? .05 : 0)) && pen < 1.2 && !(P.R.avoidHits && x.t.f && x.t.f.pop >= 85) && !learnedOut(x.t, P) }); });
+        return Object.assign(x, { fit, wi, s: .7 * (x.as / maxScore) + 1.1 * fit + SW * styleScore(x.sf || {}, S) + .25 * Math.random() - pen - hot + mix + refB - yearP - negP + km + crowdB, ok: !(known && fit < (isRef(x.t) && !P.moodT.length ? .3 : asked ? (P.home && P.moodT.length ? .55 : .42) : .35) - (est ? .05 : 0)) && pen < 1.2 && !(P.R.avoidHits && x.t.f && x.t.f.pop >= 85) && !learnedOut(x.t, P) && !homeOut(x.t, P)
+          /* "hits everyone knows" with no style named: songs most people know; a request for songs with no style named: no symphonies */
+          && !(P.R.crowd && x.t.rank && x.t.rank < (P.home ? 450000 : 250000)) && !(P.home && CLASSICAL.test(x.t.t)) }); });
       if (opt.debug) opt.debug("flush", sc.map(x => [x.t.t, primary(x.t), x.ok, +x.s.toFixed(2), +x.fit.toFixed(2), x.why.slice(0, 30)]));
       const okd = sc.filter(x => x.ok).sort((a, b) => b.s - a.s); const per = new Map(); const keep = [];
       const room = Math.min(target - found, last ? okd.length : Math.max(1, Math.ceil(okd.length * .7)));
@@ -577,12 +642,16 @@ const Classic = {
           if (no || off) picks.splice(i, 1); } } catch {} }
       const full = await Promise.all(picks.map(p => (p.t0.full && p.t0.y ? Promise.resolve(p.t0) : Deezer.track(p.t0.dz).then(t => (t ? Object.assign(t, { _why: p.t0._why }) : null)).catch(() => { fails++; return null; }))));
       full.forEach((t, k) => {
-        if (!t) return; checked++; if (eligible(Object.assign({}, t, { lang: null }), P.R, ctx.getTrack)) return;
+        if (!t) return; checked++;
+        /* dated after the era by an artist active in it: maybe a reissue, so the year is checked later instead of here */
+        const aa = ART.get((t.aid || [])[0]) || {}, by = aa.by ? aa.by + (aa.type === "Person" ? 20 : 0) : null, maybeReissue = P.R.era && t.y > P.R.era[1] && by && by <= P.R.era[1];
+        if (eligible(Object.assign({}, t, { lang: null }, maybeReissue ? { y: null } : {}), P.R, ctx.getTrack)) return;
         const c = picks[k].c; const from = [...(c.from || [])].filter(Boolean).slice(0, 2);
         const why = c.pool ? picks[k].t0._why : c.via === "known" ? `More from ${c.name}, already on this playlist` : c.via === "ref" ? `By ${c.name}, one of your reference artists`
-          : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : c.via === "kb" && c.kb ? (c.kb.tier === "core" ? `One of the artists who define ${c.kb.scene}` : `A newer or deeper name in ${c.kb.scene}`) : `Near ${from.join(" and ") || c.name}`;
+          : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : c.via === "kb" && c.kb ? (c.kb.tier === "core" ? `One of the artists who define ${c.kb.scene}` : `A newer or deeper name in ${c.kb.scene}`) : (from.length ? `Similar to ${from.join(" and ")}` : "Close to this playlist's artists");
         buf.push({ t, why, as: c.pool ? maxScore * (t._trust ? .6 : .4) : c.score, sf: picks[k].sf });
       });
+      if (opt.debug) opt.debug("group", group.map((c, k) => `${c.pool ? "pool" : c.name}:${c.pool ? "" : (c.sf && c.sf.known && c.sf.fit != null ? c.sf.fit.toFixed(2) : "?") + (styleGate(c.sf || {}, S, trustedC(c)) ? "" : "✗gate")}:${tops[k].length}`).join(" ") + ` → ${picks.length} picked, buf ${buf.length}`);
       if (buf.length >= 12 || (buf.length && found + buf.length * .7 >= target + 2)) await flush();
       say(`Finding songs… ${found}/${target} found`);
     }

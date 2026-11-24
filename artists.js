@@ -52,7 +52,10 @@ function banSet(list) {
   return { ids, names, n: names.size };
 }
 const FEAT = /[\(\[]\s*(?:feat\.?|ft\.?|featuring|with|con|part\.?)\s+([^\)\]]+)[\)\]]|\s[-–]?\s*(?:feat\.?|ft\.?|featuring)\s+(.+)$/i;
+/* "Daddy Yankee: Bzrp Music Sessions, Vol. 0/66" credits only Bizarrap: the guest is named before the colon */
+const SESSION = /^(.{2,40}?):\s*(bzrp|bizarrap|music sessions?|colors|tiny desk|freestyle)/i;
 function featNames(title) {
+  const ss = String(title || "").match(SESSION); if (ss) return uniq([ss[1].trim()]);
   const m = String(title || "").match(FEAT); if (!m) return [];
   const all = String(m[1] || m[2]).trim();
   return uniq([all, ...all.split(/\s*(?:,|&|\+|\band\b|\by\b|\be\b|\bx\b)\s*/i)].map(s => s.trim()));
@@ -142,7 +145,8 @@ const popularity = g => (g.fans ? Math.log10(g.fans + 1) + .25 * Math.log10((g.a
 function relevance(q) {
   const k = nn(q), words = String(q).toLowerCase().split(/\s+/).map(nn).filter(Boolean);
   const named = n => n.includes(k) || k.includes(n) || words.every(w => n.includes(w));
-  return g => { const n = nn(g.name); return popularity(g) + (n === k ? .5 : 0) - (named(n) ? 0 : 2); };
+  /* names that match what was typed come first; others (aliases, real names, related artists) follow, most-followed first */
+  return g => { const n = nn(g.name); return popularity(g) + (n === k ? .5 : 0) - (named(n) ? 0 : 10); };
 }
 /* The quick artist search in the playlist editor: Deezer only, ranked the same way. Artists credited on the top
    matching songs are included too, because Deezer's artist search misses some ("taylor" → no Taylor Swift). */

@@ -28,4 +28,15 @@ const P0 = { R: { era: null, dir: {} }, refs: [], ev: { manual: [], rejected: []
 const pick = kw => [...E.scenesFor(P0, { want: E.wantStyles({ keywords: kw }), broad: [], notS: [], taste: [], strict: true }).keys()];
 ok("UK drill and grime pick their scenes", JSON.stringify(pick(["uk drill", "grime"]).sort()) === JSON.stringify(["grime", "uk_drill"]), pick(["uk drill", "grime"]));
 ok("Brazilian funk picks its scene", pick(["funk brasileiro"])[0] === "funk_brasileiro", pick(["funk brasileiro"]));
+/* Classic check (24 Nov 2026): scene choice */
+const P1 = (langs = [], text = "", crowd = false) => ({ R: { era: null, dir: { text }, langs, crowd }, refs: [], ev: { manual: [], rejected: [] } });
+const sc = (kw, langs, text) => [...E.scenesFor(P1(langs, text), { want: E.wantStyles({ keywords: kw }), broad: [], notS: [], taste: [], strict: true }).keys()];
+ok("“house” is house, not EDM or amapiano", sc(["house"]).includes("house") && !sc(["house"]).includes("edm") && !sc(["house"]).includes("amapiano"), sc(["house"]));
+ok("plain “hip hop” has no lofi or regional scenes", !sc(["hip hop"]).some(k => /lofi|uk_rap|mexico_rap/.test(k)), sc(["hip hop"]));
+ok("plain “trap” is US trap; “trap” in Spanish adds Spanish-language scenes", JSON.stringify(sc(["trap"])) === '["trap"]' && sc(["trap"], ["es"]).includes("spain_urbano"), [sc(["trap"]), sc(["trap"], ["es"])]);
+ok("UK hip hop when the request says UK", sc(["hip hop"], [], "uk hip hop and grime").includes("uk_rap"));
+ok("plain “indie” finds indie rock", sc(["indie"]).includes("indie_now"));
+ok("bossa nova has its own scene", sc(["bossa nova"])[0] === "bossa_nova", sc(["bossa nova"]));
+ok("lofi still finds lofi beats", JSON.stringify(sc(["lofi"])) === '["lofi_beats"]');
+ok("crowd-pleasers with no style: mainstream scenes", [...E.scenesFor(P1([], "wedding hits", true), { want: [], broad: [], notS: [], taste: [], strict: false }).keys()].includes("pop_2010s"));
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

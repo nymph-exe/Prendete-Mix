@@ -5,13 +5,13 @@
 "use strict";
 const CUR = new Date().getFullYear();
 const deacc = s => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[’`´]/g, "'");
-const NEG = /(?:^|\b)(no|not|nothing|without|sin|nada|ni|never|nunca|avoid|avoiding|skip|except|excepto|excluding|minus|zero|don'?t|no quiero|hate|odio|evita|evitar|menos|ningun[oa]?|cero|less)\b[^,]*$/;
+const NEG = /(?:^|\b)(anything but|everything but|all but|other than|apart from|aside from|lo que sea menos|cualquier cosa menos|todo menos|no|not|nothing|without|sin|nada|ni|never|nunca|avoid|avoiding|skip|except|excepto|excluding|minus|zero|don'?t|no quiero|hate|odio|evita|evitar|menos|ningun[oa]?|cero|less)\b[^,]*$/;
 const OK_AFTER = /^\s*(?:is|are|es|son|esta|estan|also|tambien|too)?\s*(?:fine|ok|okay|bien|vale|allowed|welcome|permitid[oa]s?|bienvenid[oa]s?)\b/;
 const GENRES = [
   [/\b(reggaeton|regueton|reguetton|perreo|dembow|urbano latino|musica urbana|latin urban)\b/, "Reggaeton"], [/\b(latin|latino|latina|latinos|musica latina|latin music)\b/, "Latin Music"],
   [/\bsalsa\b/, "Salsa"], [/\bcumbias?\b/, "Cumbia"], [/\b(regional mexicano|corridos?|corridos tumbados|tumbados?|banda|mariachi|nortenos?|sierrenos?)\b/, "Traditional Mexicano"],
   [/\b(rap|hip[ -]?hop|trap|drill|grime|boom bap)\b/, "Rap/Hip Hop"], [/(?<![kjc]-?)\bpop\b/, "Pop"], [/\b(rock|punk|grunge|pop punk)\b/, "Rock"],
-  [/\b(edm|dance music|dance-pop|house|club music|eurodance)\b/, "Dance"], [/\b(electro|electronic|electronica|techno|trance|dubstep|drum and bass|dnb)\b/, "Electro"],
+  [/\b(edm|dance music|dance-pop|house(?! (party|parties|music party|warming))|club music|eurodance)\b/, "Dance"], [/\b(electro|electronic|electronica|techno|trance|dubstep|drum and bass|dnb)\b/, "Electro"],
   [/\b(r&b|rnb|r ?n ?b|r and b)\b/, "R&B"], [/\b(soul|(?<!brazilian |baile |brasil |brazil )funk(?! carioca)|motown|disco)\b/, "Soul & Funk"], [/\b(alternative|alt|indie)\b/, "Alternative"],
   [/\b(reggae|dancehall)\b/, "Reggae"], [/\bjazz\b/, "Jazz"], [/\bcountry\b/, "Country"], [/\b(classical|clasica|orchestral|opera)\b/, "Classical"], [/\b(metal|metalcore|heavy metal)\b/, "Metal"],
   [/\b(afrobeats?|afro ?pop|amapiano|afro house|african)\b/, "African Music"], [/\b(k-?pop|j-?pop|c-?pop|asian|anime)\b/, "Asian Music"],
@@ -48,9 +48,9 @@ const VERSIONS = /\b(remix(es)?|live versions?|en vivo|sped[- ]up|slowed|acousti
 const THROWBACK = /\b(throwbacks?|old school|oldies|classics|clasicos|retro|vieja escuela)\b/;
 const RECENT = /\b(recent|new music|new songs|newest|latest|current|nuev[oa]s|recientes|actuales|de ahora|fresh|this year|este ano)\b/;
 const FILLER = new Set("the a an some songs song music tracks track stuff things vibes vibe artists artist bands band singers people like and or y o e de del la el los las con with by from of en mas more other otros otras canciones cancion musica temas tema artistas cosas rollo tipo estilo as such similar to also too even just only really very".split(" "));
-const CUE_REF = /\b(like|similar to|such as|in the style of|sounds? like|think|influenced by|inspired by|e\.?g\.?|for example|parecid[oa]s? a|como|tipo|estilo|onda|al estilo de|rollo|artists? like|songs? like|references?|reference|vibes? (?:of|like)|from artists like|similar a|influencias? de|songs by|music by|tracks by|canciones de|musica de|temas de|artists such as)\s*[:]?\s*/g;
-const CUE_MUST = /\b(must (?:have|include|be on it)|has to have|have to include|include|including|add|make sure (?:to (?:add|include))?|needs?|with|incluye|incluir|incluya|que tenga|tiene que tener|agrega|agregar|anade|pon|ponle|que este|que esten)\s*[:]?\s*/g;
-const CUE_EX = /\b(no|not|without|nothing (?:by|from)|except|excluding|exclude|avoid|skip|ban|never|hate|sin|nada de|excepto|menos|ni|odio|evita|evitar|cero|zero)\s+/g;
+const CUE_REF = /\b(like|similar to|such as|in the style of|sounds? like|think|influenced by|inspired by|e\.?g\.?|for example|parecid[oa]s? a|como|tipo|estilo|onda|al estilo de|rollo|artists? like|songs? like|references?|reference|vibes? (?:of|like)|from artists like|similar a|influencias? de|songs by|music by|tracks by|canciones de|musica de|temas de|artists such as)(?![A-Za-z0-9À-ÿ])\s*[:]?\s*/g;
+const CUE_MUST = /\b(must (?:have|include|be on it)|has to have|have to include|include|including|add|make sure (?:to (?:add|include))?|needs?|with|incluye|incluir|incluya|que tenga|tiene que tener|agrega|agregar|anade|pon|ponle|que este|que esten)(?![A-Za-z0-9À-ÿ])\s*[:]?\s*/g;
+const CUE_EX = /\b(anything but|everything but|other than|apart from|aside from|cualquier cosa menos|lo que sea menos|todo menos|no|not|without|nothing (?:by|from)|except|excluding|exclude|avoid|skip|ban|never|hate|sin|nada de|excepto|menos|ni|odio|evita|evitar|cero|zero)\s+/g;
 const COMMON = new Set(("i you he she it we they me him her us them my your his its our their this that these those what which who whom whose when where why how all any both each few more most other some such no nor not only own same so than too very can will just don should now one two three first last new old good bad great best better high low big small long short little right left real true false hot cool nice sweet hard soft light heavy fast slow loud quiet happy sad fun funny joke jokes silly cringe corny cheesy generic boring basic typical random weird strange classic modern fresh clean dirty dark bright warm cold summer winter spring fall day night morning evening weekend time year years life love heart world man woman girl boy baby people friends family home house car road city street beach sun moon star fire water rain wind sky way thing things stuff something anything everything nothing someone anyone everyone song songs track tracks hit hits album albums artist artists band bands singer rapper producer music sound sounds beat beats vibe vibes mood energy playlist list mix set radio video tiktok snippet snippets anthem anthems throwback throwbacks must should could would might may also even still again ever never always sometimes often maybe please thanks hello hey yes yeah okay ok fine well much many lot lots kind sort type style feel feeling think want need like make get go come see know take give find tell ask work play put keep let begin seem help show hear run move live believe bring happen write sit stand lose pay meet include continue set learn change lead understand watch follow stop create speak read spend grow open walk win offer remember consider appear buy wait serve die send expect build stay fall cut reach kill remain suggest raise pass sell require report decide pull " +
   "yo tu el ella nosotros ustedes ellos mi mis su sus nuestro que cual quien cuando donde como todo todos nada algo alguien nadie bueno buena malo mala mejor peor alto bajo grande pequeno nuevo nueva viejo vieja rapido lento suave fuerte feliz triste caliente frio dia noche manana tarde semana ano anos vida amor corazon mundo hombre mujer chica chico gente amigos familia casa carro calle playa sol luna fuego agua cancion canciones tema temas musica artista artistas sonido ritmo vibra lista algo cosas tipo estilo onda rollo sin con para por pero tambien muy mas menos solo siempre nunca ahora hoy").split(" "));
 const MONTHS = /^(january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)$/;
@@ -63,7 +63,7 @@ function lexiconWord(w) {
 }
 function clauses(text) {
   const out = []; const re = /[^.!?;\n]+/g; let m;
-  while ((m = re.exec(text))) { const parts = m[0].split(/\b(?=but |pero |however |sino |aunque )/); let off = m.index; for (const p of parts) { out.push({ s: off, e: off + p.length }); off += p.length; } }
+  while ((m = re.exec(text))) { const parts = m[0].split(/\b(?<!(?:anything|everything|all|nothing|todo|nada) )(?=but |pero |however |sino |aunque )/); let off = m.index; for (const p of parts) { out.push({ s: off, e: off + p.length }); off += p.length; } }
   return out;
 }
 /* find every match of re; return {val, neg, allowed} per hit, judging negation inside its own comma-separated segment */
@@ -90,6 +90,8 @@ function splitNames(chunk) {
 /* any genre from the bundled MusicBrainz list (2,200+), matched by n-grams; spacing, hyphens and plurals don't matter */
 let GKEY = null; const gk = s => deacc(s).replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
 const AMBIG = new Set(["house", "garage", "swing", "march", "beat", "bass", "noise", "chill", "dance", "christmas", "holiday", "comedy", "lounge", "space", "dark", "hardcore", "cabaret", "opera", "children's music"]);
+const CLEAR = new Set(["house", "garage", "swing", "christmas", "holiday", "comedy", "lounge", "hardcore", "cabaret", "opera"]);
+const MUSICW = /^(songs?|music|tunes|tracks|hits|playlist|canciones|musica|cancion|temas|classics|carols)$/;
 function genreIndex() {
   if (GKEY) return GKEY; const L = (typeof globalThis !== "undefined" && globalThis.GENRES) || (typeof require !== "undefined" ? (() => { try { return require("./genres.js"); } catch { return []; } })() : []);
   GKEY = new Map(); for (const g of L) { const k = gk(g); if (k.length >= 3 && !GKEY.has(k)) GKEY.set(k, g); } return GKEY;
@@ -102,7 +104,8 @@ function findGenres(low, cls) {
     if ([...Array(n).keys()].some(k => used.has(i + k))) continue;
     const words = toks.slice(i, i + n).map(t => t.w); let g = idx.get(gk(words.join(" ")));
     if (!g) g = idx.get(gk(words.map(w => (w.length > 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w)).join(" ")));
-    if (!g) continue; if (n === 1 && AMBIG.has(g)) continue;
+    /* an ambiguous word counts when it's clearly about music: "christmas songs", "house music", "lounge tracks" */
+    if (!g) continue; if (n === 1 && AMBIG.has(g) && !(CLEAR.has(g) && toks[i + 1] && MUSICW.test(toks[i + 1].w))) continue;
     const at = toks[i].i; const c = cls.find(c => at >= c.s && at < c.e) || { s: 0 }; let seg = low.slice(c.s, at); const cm = seg.lastIndexOf(","); if (cm >= 0) seg = seg.slice(cm + 1);
     for (let k = 0; k < n; k++) used.add(i + k); out.push({ g, neg: NEG.test(seg) });
   }
@@ -110,7 +113,14 @@ function findGenres(low, cls) {
 }
 function read(text) {
   /* "la disco" / "discoteca" in Spanish is the club, not the genre */
-  const raw = String(text || "").replace(/\b(la|una|las|pa la|pa' la)\s+disco(teca)?s?\b/gi, "$1 fiesta").replace(/\bdiscotecas?\b/gi, "fiesta"); const low = deacc(raw); const cls = clauses(low);
+  /* Spanish genre names, in the English form the genre list and the scene map use */
+  const ES_G = [[/\brock alternativo\b/g, "alternative rock"], [/\brock(?= en espa(n|ñ)ol\b)/g, "latin rock"], [/\b(rock latino|rock nacional)\b/g, "latin rock"], [/\brock cl(a|á)sico\b/g, "classic rock"], [/\bpop latino\b/g, "latin pop"],
+    [/\bpop alternativo\b/g, "alternative pop"], [/\bm(u|ú)sica electr(o|ó)nica\b/g, "electronic"], [/\bindie latino\b/g, "latin alternative"], [/\bindie(?= en espa(n|ñ)ol\b)/g, "latin alternative"], [/\bbaladas? rom(a|á)nticas?\b/g, "latin ballad"],
+    [/\b(hip ?hop|rap) latino\b/g, "latin hip hop"], [/\b(hip ?hop|rap)(?= en espa(n|ñ)ol\b)/g, "latin hip hop"]];
+  const esg = s0 => ES_G.reduce((s1, [re, to]) => s1.replace(new RegExp(re.source, "gi"), to), s0);
+  /* holiday music in any wording becomes the one genre name the catalog knows: "christmas music" */
+  const raw = esg(String(text || "")).replace(/\b(m[uú]sica|canciones|villancicos?|temas)\s+(de\s+)?(navidad(es)?|navide(n|ñ)[oa]s?)\b/gi, "christmas music")
+    .replace(/\b(christmas|holiday|x-?mas)\s+(songs?|music|tunes|hits|carols|classics|playlist)\b/gi, (m, a, b) => (/^(hits|classics)$/i.test(b) ? "christmas music " + b : "christmas music")).replace(/\b(navidad(es)?|navide(n|ñ)[oa]s?|x-?mas)\b/gi, "christmas music").replace(/\b(la|una|las|pa la|pa' la)\s+disco(teca)?s?\b/gi, "$1 fiesta").replace(/\bdiscotecas?\b/gi, "fiesta"); const low = deacc(raw); const cls = clauses(low);
   const tr = { genres: [], moods: [], keywords: [], energy: "", tempo: "", bpm: null, era: null, languages: [], notLanguages: [], explicit: "any", versions: false, avoidHits: false, preferHits: false };
   const out = { name: "", summary: "", include: [], references: [], referenceArtists: [], excludeArtists: [], excludeSongs: [], traits: tr, verifyNames: true };
   const add = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
@@ -139,7 +149,7 @@ function read(text) {
   const yr = [];
   for (const x of hits(low, /\b((?:19|20)\d{2})\s*(?:-|–|to|a|hasta|through|thru|al|y)\s*((?:19|20)\d{2})\b/, cls)) if (!x.neg) yr.push([+x.m[1], +x.m[2]]);
   if (!yr.length) {
-    for (const x of hits(low, /\b(?:from|since|desde|after|despues de|post|starting|a partir de)\s*((?:19|20)\d{2})\b/, cls)) if (!x.neg) yr.push([+x.m[1], CUR]);
+    for (const x of hits(low, /\b(from|since|desde|after|despues de|post|starting|a partir de)\s*((?:19|20)\d{2})\b(\s*(?:on|onwards?|and (?:later|after|up)|forward|till now|to now|to today|en adelante|para aca|hasta hoy|hasta ahora|\+))?/, cls)) if (!x.neg) yr.push(x.m[1] === "from" && !x.m[3] ? [+x.m[2], +x.m[2]] : [+x.m[2], CUR]);
     for (const x of hits(low, /\b(?:before|until|up to|antes de|hasta|pre)\s*((?:19|20)\d{2})\b/, cls)) if (!x.neg) yr.push([1900, +x.m[1]]);
     for (const x of hits(low, /\b(early|late|mid|principios de los|finales de los|mediados de los)?\s*(?:the |los |la decada de los )?((?:19|20)?\d0)'?s?\b(?=s|'s|\s|$|,)/, cls)) {
       const t = x.m[0]; if (!/s\b|'s|los |decada/.test(t + low.slice(x.i + t.length, x.i + t.length + 2))) continue; if (x.neg) continue;
@@ -186,7 +196,7 @@ function read(text) {
       const chunkRaw = rest.slice(st, end); for (const n of splitNames(chunkRaw)) { if (/\sby\s/i.test(n)) continue; if (kind === "excludeArtists") push("excludeArtists", n); else if (kind === "include") push("referenceArtists", n); else push("referenceArtists", n); } } };
   cueNames(CUE_REF, "referenceArtists"); cueNames(CUE_EX, "excludeArtists"); cueNames(CUE_MUST, "include");
   const vre = /([^.;!?\n]{2,90}?)\s+(?:vibes|type beat|type of|style|energy|wave)\b/gu;
-  while ((m = vre.exec(rest))) { if (/\b(high|low|medium|mid|good|great|big|positive|chill|calm|party|summer|same|more|less|full|max|maximum|alta|baja|buena|mucha)\s*$/i.test(m[1])) continue; const chunk = m[1].replace(/^.*\b(?:like|with|some|more|that|those|esa|ese|con|tipo)\s+/i, ""); const r = ctxRole(m.index + m[0].length - 1);
+  while ((m = vre.exec(rest))) { if (/\b(high|low|medium|mid|good|great|big|positive|chill|calm|party|summer|same|more|less|full|max|maximum|alta|baja|buena|mucha)\s*$/i.test(m[1])) continue; const chunk = m[1].replace(/^.*\b(?:like|with|some|more|that|those|esa|ese|con|tipo)\s+/i, "").replace(/^[a-záéíóúñü'\s]+(?=[A-ZÁÉÍÓÚÑÜ$])/, ""); const r = ctxRole(m.index + m[0].length - 1);
     for (const n of splitNames(chunk)) { if (/\sby\s/i.test(n) || n.split(/\s+/).length > 4) continue; push(r === "ex" ? "excludeArtists" : "referenceArtists", n); } }
   // Capitalized names anywhere (need a stronger catalog match: see minFans)
   const cap = /(?:^|[\s,(])((?:[A-ZÁÉÍÓÚÑÜ$][\p{L}\d$'’&.!-]*)(?:\s+(?:[A-ZÁÉÍÓÚÑÜ$][\p{L}\d$'’&.!-]*|(?:de|del|la|the|of|da)\b)){0,3})/gu; const caps = [];
@@ -207,13 +217,14 @@ function summarize(o) {
   const any = names || t.genres.length || (t.keywords || []).length || t.moods.length || t.energy || t.bpm || t.tempo || t.era || t.languages.length || t.notLanguages.length || (t.notStyles || []).length || t.gems || t.avoidHits || t.preferHits || t.crowd || t.explicit !== "any" || t.versions;
   if (!any) return "Nothing in that could be used: no genre, style, mood, tempo, era, language, artist or song. Name at least one of those, or use the form below.";
   const styles = (t.keywords || []).filter(k => !t.genres.some(g => gk(g) === gk(k))).slice(0, 4);
-  const like = (o.referenceArtists || []).length ? ` like ${list(o.referenceArtists.slice(0, 4))}` : "";
+  const like = (o.referenceArtists || []).length ? ` like ${list(o.referenceArtists.slice(0, 4).map(n => (/[A-Z]/.test(n) ? n : n.replace(/(^|\s)\p{L}/gu, c => c.toUpperCase()))))}` : "";
   const what = (t.genres.length || styles.length ? list([...t.genres, ...styles.map(nice)]) : "Songs") + like; const mood = t.moods.length ? ` with a ${list(t.moods.map(x => x.toLowerCase()))} feel` : "";
   s.push(`${what.charAt(0).toUpperCase() + what.slice(1)}${mood}${t.energy ? `, ${t.energy} energy` : ""}${t.bpm ? `, around ${t.bpm[0]}–${t.bpm[1]} BPM` : t.tempo ? `, ${t.tempo} tempo` : ""}.`);
   if (t.era) s.push(t.era[0] === t.era[1] ? `Released in ${t.era[0]}.` : `Released ${t.era[0]}–${t.era[1]}.`);
   if (t.languages.length) s.push(`Sung in ${list(t.languages.map(l => LN[l] || l))}.`); if (t.notLanguages.length) s.push(`Nothing in ${list(t.notLanguages.map(l => LN[l] || l))}.`);
   if ((t.notStyles || []).length) s.push(`No ${list(t.notStyles.map(nice))}.`);
   if (t.gems) s.push("Lesser-known artists and deep cuts."); else if (t.avoidHits) s.push("Skipping the most-played hits."); if (t.preferHits) s.push("Leaning toward popular songs.");
+  if ((t.energy === "high" && (t.tempo === "slow" || (t.bpm && t.bpm[1] <= 90))) || (t.energy === "low" && (t.tempo === "fast" || (t.bpm && t.bpm[0] >= 125)))) s.push("That tempo and energy pull in opposite directions, so expect a mix of both.");
   if (t.explicit === "clean") s.push("Clean versions only."); if (t.explicit === "explicit") s.push("Explicit versions preferred."); if (t.versions) s.push("Remixes and other versions are welcome.");
   return s.join(" ");
 }

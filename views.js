@@ -316,12 +316,14 @@ function vNew(v) {
   m.append(h("p", { class: "status", "aria-live": "polite", text: D.msg || "" }));
   m.append(h("div", { class: "btns" }, btn(D.busy ? "Creating…" : "Create and find songs", "red", () => createFromDraft(D), { ic: "spark", disabled: D.busy ? true : null })));
 }
-function hasSeeds(st) { const d = st.dir, f = d.form || {}; return d.refs.length || st.must.length || d.artists.length || (f.genres || []).some(g => g.id) || (f.moods || []).length || (f.keywords || []).length; }
+/* Classic can start from any of these: songs, artists, genres, styles, moods, or the years, language, energy or tempo asked for */
+function hasSeeds(st) { const d = st.dir, f = d.form || {}; return d.refs.length || st.must.length || d.artists.length || (f.genres || []).some(g => g.id) || (f.moods || []).length || (f.keywords || []).length
+  || (Array.isArray(f.era) && f.era[0]) || (f.langs || []).length === 1 || f.energy || f.tempo || (Array.isArray(f.bpm) && f.bpm[0]) || f.crowd || f.gems; }
 async function createFromDraft(D) {
   const st = D.st, d = st.dir; const name = D.name.trim(); if (!name) { D.msg = "Give the playlist a name."; return render(); }
   if (D.method === "A" && !d.refs.length && !st.must.length && !d.artists.length) { D.msg = "Pick at least one artist or song."; return render(); }
   if (D.method === "B" && !st._read && !hasSeeds(st)) { D.msg = d.text.trim() ? "Tap “Read my description” first so you can check what it understood." : "Write a description, or use the form instead."; return render(); }
-  if (D.engine.mode !== "ai" && !hasSeeds(st)) { D.msg = "Add a genre, mood, style, artist or song so Classic has a starting point."; return render(); }
+  if (D.engine.mode !== "ai" && !hasSeeds(st)) { D.msg = "Add a genre, mood, style, artist, song, years or a language so Classic has a starting point."; return render(); }
   if (D.engine.mode === "ai" && !aiReady(D.engine.provider)) { D.msg = "Add an AI key in Settings, or switch to Classic."; return render(); }
   if (st.must.length > D.capacity) { D.msg = `You picked ${st.must.length} must-include songs but the capacity is ${D.capacity}. Raise the capacity or unmark some.`; return render(); }
   D.busy = true; D.msg = "Creating…"; render();
