@@ -12,4 +12,14 @@ r = R.read("Upbeat party songs, any language. Mellow is fine. No overplayed hits
 eq("any language", r.traits.languages, []); eq("avoid hits", r.traits.avoidHits, true); eq("era range", r.traits.era, [2017, 2026]); eq("only DaBaby excluded", r.excludeArtists, ["DaBaby"]);
 r = R.read("90s and early 2000s R&B slow jams, clean versions, like Aaliyah and Brandy");
 eq("decades", r.traits.era, [1990, 2004]); eq("clean", r.traits.explicit, "clean"); eq("r&b refs", r.referenceArtists, ["Aaliyah", "Brandy"]);
+// any genre from the bundled MusicBrainz list, plural or hyphenated, plus styles to leave out
+r = R.read("80s synthpop and new wave for a retro night"); eq("synthpop + new wave", r.traits.keywords, ["new wave", "synth-pop"]); eq("80s", r.traits.era, [1980, 1989]);
+r = R.read("corridos tumbados y regional mexicano como Peso Pluma y Natanael Cano"); eq("corridos tumbados", r.traits.keywords, ["regional mexicano", "corrido tumbado"]);
+r = R.read("UK drill and grime, aggressive, like Central Cee and Skepta"); eq("uk drill", r.traits.keywords, ["grime", "uk drill"]);
+r = R.read("shoegaze and dream pop, no metal"); eq("shoegaze", r.traits.keywords, ["shoegaze", "dream pop"]); eq("not metal", r.traits.notStyles, ["metal"]);
+r = R.read("house party songs, no edm"); eq("not edm", r.traits.notStyles, ["edm"]); eq("summary no EDM", /No EDM\./.test(r.summary), true);
+r = R.read("sad indie folk for a rainy day, like Phoebe Bridgers and Bon Iver"); eq("indie folk", r.traits.keywords, ["indie folk"]);
+r = R.read("90s and early 2000s R&B slow jams, clean versions, like Aaliyah and Brandy"); eq("slow jams romantic", r.traits.moods, ["Romantic"]); eq("slow jams tempo", r.traits.tempo, "slow");
+r = R.read("K-pop dance songs, high energy, hidden gems only"); eq("hidden gems", [r.traits.gems, r.traits.avoidHits], [true, true]);
+r = R.read("no Reggaeton, more Dembow like El Alfa"); eq("ruled-out genre dropped", r.traits.genres, []); eq("genre not an artist", r.excludeArtists, []);
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

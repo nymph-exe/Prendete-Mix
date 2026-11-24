@@ -23,11 +23,11 @@ const MOODS = [
   [/\b(hype|hyped|pump(ed)? up|intense|aggressive|bangers?|turnt|hard[- ]hitting|motivat\w*)\b/, "Hype"],
   [/\b(workout|gym|training|running|cardio|entreno|entrenar|ejercicio|correr)\b/, "Workout"],
   [/\b(chill|chilling|relax\w*|calm|laid[- ]back|lo-?fi|tranquil[oa]|easy listening|unwind|sunday morning)\b/, "Chill"],
-  [/\b(romantic|romantic[oa]|love songs?|canciones de amor|date night|enamorad[oa]s?|cita)\b/, "Romantic"],
+  [/\b(romantic|romantic[oa]|love songs?|canciones de amor|date night|enamorad[oa]s?|cita|slow jams?|baladas?|ballads?)\b/, "Romantic"],
   [/\b(sad|triste|heartbreak|heartbroken|despecho|melanchol\w*|crying|llorar|breakup|ruptura)\b/, "Sad"],
   [/\b(dark|oscur[oa]|moody|sinister|eerie|gloomy)\b/, "Dark"],
   [/\b(feel[- ]good|happy|feliz|alegre|sunny|summer|verano|playa|beach|cheerful|good vibes|buena vibra|buen rollo|positive|positiv[oa])\b/, "Feel-good"],
-  [/\b(sexy|sensual|seductive|slow jams?|bellac[oa]|intimate|intim[oa])\b/, "Sensual"],
+  [/\b(sexy|sensual|seductive|bellac[oa]|intimate|intim[oa])\b/, "Sensual"],
   [/\b(focus|study|studying|estudiar|concentrat\w*|deep work|coding)\b/, "Focus"],
   [/\b(danceable|bailable|bailables|to dance|para bailar|groovy|groove|dance ?floor|pista|bailar|dance (?:songs|tracks|hits|jams))\b/, "Danceable"]
 ];
@@ -87,6 +87,27 @@ function splitNames(chunk) {
   }).filter(x => x && x.length >= 2 && x.split(/\s+/).length <= 5 && !lexiconWord(x) && !x.split(/\s+/).every(w => lexiconWord(w)));
 }
 
+/* any genre from the bundled MusicBrainz list (2,200+), matched by n-grams; spacing, hyphens and plurals don't matter */
+let GKEY = null; const gk = s => deacc(s).replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+const AMBIG = new Set(["house", "garage", "swing", "march", "beat", "bass", "noise", "chill", "dance", "christmas", "holiday", "comedy", "lounge", "space", "dark", "hardcore", "cabaret", "opera", "children's music"]);
+function genreIndex() {
+  if (GKEY) return GKEY; const L = (typeof globalThis !== "undefined" && globalThis.GENRES) || (typeof require !== "undefined" ? (() => { try { return require("./genres.js"); } catch { return []; } })() : []);
+  GKEY = new Map(); for (const g of L) { const k = gk(g); if (k.length >= 3 && !GKEY.has(k)) GKEY.set(k, g); } return GKEY;
+}
+function findGenres(low, cls) {
+  const idx = genreIndex(); if (!idx.size) return [];
+  const toks = []; const re = /[a-z0-9&'-]+/g; let m; while ((m = re.exec(low))) toks.push({ w: m[0], i: m.index });
+  const out = []; const used = new Set();
+  for (let n = 4; n >= 1; n--) for (let i = 0; i + n <= toks.length; i++) {
+    if ([...Array(n).keys()].some(k => used.has(i + k))) continue;
+    const words = toks.slice(i, i + n).map(t => t.w); let g = idx.get(gk(words.join(" ")));
+    if (!g) g = idx.get(gk(words.map(w => (w.length > 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w)).join(" ")));
+    if (!g) continue; if (n === 1 && AMBIG.has(g)) continue;
+    const at = toks[i].i; const c = cls.find(c => at >= c.s && at < c.e) || { s: 0 }; let seg = low.slice(c.s, at); const cm = seg.lastIndexOf(","); if (cm >= 0) seg = seg.slice(cm + 1);
+    for (let k = 0; k < n; k++) used.add(i + k); out.push({ g, neg: NEG.test(seg) });
+  }
+  return out;
+}
 function read(text) {
   const raw = String(text || ""); const low = deacc(raw); const cls = clauses(low);
   const tr = { genres: [], moods: [], keywords: [], energy: "", tempo: "", bpm: null, era: null, languages: [], notLanguages: [], explicit: "any", versions: false, avoidHits: false, preferHits: false };
@@ -94,6 +115,11 @@ function read(text) {
   const add = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
   for (const [re, name] of GENRES) for (const x of hits(low, re, cls)) if (!x.neg) { add(tr.genres, name); if (x.m[0].length > 2 && !/^(latin[oa]?s?|pop|rock|dance music|alt|asian)$/.test(x.m[0])) add(tr.keywords, x.m[0]); }
   for (const x of hits(low, /\b(lo-?fi|ambient|piano|acoustic guitar|synthwave|city pop|bedroom pop|phonk|jersey club|drill|baile funk|guaracha|bachata|merengue|vallenato|tango|flamenco|bolero|kizomba|dancehall|soca|grime|garage|deep house|tech house|afro house|trance|hyperpop|shoegaze|emo|neo soul|boom bap|jazz rap|jazz-hop|chillhop|bossa nova|instrumental)\b/, cls)) if (!x.neg) add(tr.keywords, x.m[0]);
+  for (const x of findGenres(low, cls)) { if (x.neg) { add(tr.notStyles = tr.notStyles || [], x.g); continue; } if (!tr.keywords.some(k => gk(k) === gk(x.g))) add(tr.keywords, x.g); }
+  tr.keywords = tr.keywords.filter(k => !(tr.notStyles || []).some(n => gk(n) === gk(k)));
+  tr.genres = tr.genres.filter(g => !(tr.notStyles || []).some(n => gk(n) === gk(g)));
+  /* "indie folk" already says "indie" and "folk"; keep the longer name */
+  tr.keywords = tr.keywords.filter(k => !tr.keywords.some(o => o !== k && / /.test(o) && deacc(o).split(/[ -]+/).some(w => gk(w) === gk(k) || gk(w) === gk(k).replace(/s$/, ""))));
   // "to dance" style phrases mean danceable, not the Dance genre
   for (const [re, name] of MOODS) for (const x of hits(low, re, cls)) if (!x.neg && !x.allowed) add(tr.moods, name);
   for (const [re, v] of ENERGY) for (const x of hits(low, re, cls)) if (!x.neg && !x.allowed && !tr.energy) tr.energy = v;
@@ -132,11 +158,13 @@ function read(text) {
   for (const x of hits(low, EXPLICIT, cls)) { if (x.neg) tr.explicit = "clean"; else if (x.allowed || /explicit (is |are )?(fine|ok|okay)/.test(low)) { if (tr.explicit !== "clean") tr.explicit = "any"; } else tr.explicit = "explicit"; }
   for (const x of hits(low, VERSIONS, cls)) tr.versions = !x.neg;
   for (const x of hits(low, HITS_AVOID, cls)) if (x.neg) tr.avoidHits = true;
-  for (const x of hits(low, HITS_NICHE, cls)) if (!x.neg) tr.avoidHits = true;
+  for (const x of hits(low, HITS_NICHE, cls)) if (!x.neg) { tr.avoidHits = true; tr.gems = true; }
+  if (/\bslow jams?\b/.test(low) && !tr.tempo && !tr.bpm) tr.tempo = "slow";
   if (!tr.avoidHits) for (const x of hits(low, HITS_PREFER, cls)) if (!x.neg && !x.allowed) tr.preferHits = true;
   // names: quoted titles, "Title by Artist", then cue-word lists, "X vibes", Capitalized names
   const seen = new Set(); const role = (s, base) => base;
-  const push = (kind, item) => { const k = kind + "|" + deacc(JSON.stringify(item)); if (seen.has(k)) return; seen.add(k); out[kind].push(item); };
+  const isGenre = n => { const ix = genreIndex(), k = gk(n); return ix.has(k) || ix.has(k.replace(/s$/, "")) || (tr.keywords || []).concat(tr.notStyles || []).some(x => gk(x) === k); };
+  const push = (kind, item) => { if (typeof item === "string" && isGenre(item)) return; const k = kind + "|" + deacc(JSON.stringify(item)); if (seen.has(k)) return; seen.add(k); out[kind].push(item); };
   const ctxRole = i => { const c = cls.find(c => i >= c.s && i < c.e) || { s: 0 }; const before = low.slice(Math.max(c.s, i - 60), i);
     const lastMatch = (re) => { let mm, last = -1; const g = new RegExp(re.source, "g"); while ((mm = g.exec(before))) last = mm.index; return last; };
     const ex = lastMatch(CUE_EX), mu = lastMatch(CUE_MUST), rf = lastMatch(CUE_REF); const mx = Math.max(ex, mu, rf); if (mx < 0) return "ref"; return mx === ex ? "ex" : mx === mu ? "must" : "ref"; };
@@ -153,13 +181,13 @@ function read(text) {
       const chunkRaw = rest.slice(st, end); for (const n of splitNames(chunkRaw)) { if (/\sby\s/i.test(n)) continue; if (kind === "excludeArtists") push("excludeArtists", n); else if (kind === "include") push("referenceArtists", n); else push("referenceArtists", n); } } };
   cueNames(CUE_REF, "referenceArtists"); cueNames(CUE_EX, "excludeArtists"); cueNames(CUE_MUST, "include");
   const vre = /([^.;!?\n]{2,90}?)\s+(?:vibes|type beat|type of|style|energy|wave)\b/gu;
-  while ((m = vre.exec(rest))) { const chunk = m[1].replace(/^.*\b(?:like|with|some|more|that|those|esa|ese|con|tipo)\s+/i, ""); const r = ctxRole(m.index + m[0].length - 1);
+  while ((m = vre.exec(rest))) { if (/\b(high|low|medium|mid|good|great|big|positive|chill|calm|party|summer|same|more|less|full|max|maximum|alta|baja|buena|mucha)\s*$/i.test(m[1])) continue; const chunk = m[1].replace(/^.*\b(?:like|with|some|more|that|those|esa|ese|con|tipo)\s+/i, ""); const r = ctxRole(m.index + m[0].length - 1);
     for (const n of splitNames(chunk)) { if (/\sby\s/i.test(n) || n.split(/\s+/).length > 4) continue; push(r === "ex" ? "excludeArtists" : "referenceArtists", n); } }
   // Capitalized names anywhere (need a stronger catalog match: see minFans)
   const cap = /(?:^|[\s,(])((?:[A-ZÁÉÍÓÚÑÜ$][\p{L}\d$'’&.!-]*)(?:\s+(?:[A-ZÁÉÍÓÚÑÜ$][\p{L}\d$'’&.!-]*|(?:de|del|la|the|of|da)\b)){0,3})/gu; const caps = [];
   while ((m = cap.exec(rest))) { let n = m[1].replace(/[.!-]+$/, "").trim(); while (n && /^(no|not|sin|must|like|tipo|como|include|with|something|some|also|and|y|or|songs?|music|upbeat|sunny)$/i.test(n.split(/\s+/)[0])) n = n.split(/\s+/).slice(1).join(" "); const words = n.split(/\s+/); if (!n || words.every(lexiconWord) || lexiconWord(n)) continue; if (words.length === 1 && n.length < 3) continue;
     const st = m.index + m[0].indexOf(n); const sentStart = /(^|[.!?\n]\s*)$/.test(rest.slice(0, st)); if (sentStart && words.length === 1 && lexiconWord(words[0])) continue;
-    caps.push({ name: n, role: ctxRole(st) }); }
+    if (isGenre(n)) continue; caps.push({ name: n, role: ctxRole(st) }); }
   const sub = (a, b) => { a = deacc(a); b = deacc(b); return a === b || a.includes(b) || b.includes(a); };
   out.maybeArtists = caps.filter((c, i) => caps.findIndex(d => deacc(d.name) === deacc(c.name)) === i).filter(c => ![...out.referenceArtists, ...out.excludeArtists].some(x => sub(x, c.name)) && ![...out.include, ...out.references, ...out.excludeSongs].some(x => deacc(x.title) === deacc(c.name) || deacc(x.artist) === deacc(c.name)));
   out.summary = summarize(out);
@@ -167,17 +195,20 @@ function read(text) {
 }
 const LN = { es: "Spanish", en: "English", pt: "Portuguese", fr: "French", it: "Italian", de: "German", ko: "Korean", ja: "Japanese", zh: "Chinese", ru: "Russian", ar: "Arabic", hi: "Hindi" };
 const list = a => (a.length <= 1 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1]);
+const nice = g => String(g).replace(/\b(edm|uk|r&b|ebm|idm|mpb|dnb)\b/gi, m => m.toUpperCase()).replace(/\bk-pop\b/i, "K-pop").replace(/\bj-pop\b/i, "J-pop");
 function summarize(o) {
   const t = o.traits, s = [];
-  const what = t.genres.length ? list(t.genres) : "Songs"; const mood = t.moods.length ? ` with a ${list(t.moods.map(x => x.toLowerCase()))} feel` : "";
-  s.push(`${what}${mood}${t.energy ? `, ${t.energy} energy` : ""}${t.bpm ? `, around ${t.bpm[0]}–${t.bpm[1]} BPM` : t.tempo ? `, ${t.tempo} tempo` : ""}.`);
+  const styles = (t.keywords || []).filter(k => !t.genres.some(g => gk(g) === gk(k))).slice(0, 4);
+  const what = t.genres.length || styles.length ? list([...t.genres, ...styles.map(nice)]) : "Songs"; const mood = t.moods.length ? ` with a ${list(t.moods.map(x => x.toLowerCase()))} feel` : "";
+  s.push(`${what.charAt(0).toUpperCase() + what.slice(1)}${mood}${t.energy ? `, ${t.energy} energy` : ""}${t.bpm ? `, around ${t.bpm[0]}–${t.bpm[1]} BPM` : t.tempo ? `, ${t.tempo} tempo` : ""}.`);
   if (t.era) s.push(t.era[0] === t.era[1] ? `Released in ${t.era[0]}.` : `Released ${t.era[0]}–${t.era[1]}.`);
   if (t.languages.length) s.push(`Sung in ${list(t.languages.map(l => LN[l] || l))}.`); if (t.notLanguages.length) s.push(`Nothing in ${list(t.notLanguages.map(l => LN[l] || l))}.`);
-  if (t.avoidHits) s.push("Skipping the most-played hits."); if (t.preferHits) s.push("Leaning toward popular songs.");
+  if ((t.notStyles || []).length) s.push(`No ${list(t.notStyles.map(nice))}.`);
+  if (t.gems) s.push("Lesser-known artists and deep cuts."); else if (t.avoidHits) s.push("Skipping the most-played hits."); if (t.preferHits) s.push("Leaning toward popular songs.");
   if (t.explicit === "clean") s.push("Clean versions only."); if (t.explicit === "explicit") s.push("Explicit versions preferred."); if (t.versions) s.push("Remixes and other versions are welcome.");
   return s.join(" ");
 }
-const API = { read, summarize, deacc, lexiconWord };
+const API = { read, summarize, deacc, lexiconWord, findGenres, gk };
 G.Reader = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

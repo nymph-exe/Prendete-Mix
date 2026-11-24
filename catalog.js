@@ -7,6 +7,7 @@ const Core = G.Core || (typeof require !== "undefined" ? require("./core.js") : 
 const BROWSER = typeof document !== "undefined";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const https = u => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
+function pacer(perSec) { let next = 0; const gap = 1000 / perSec; return async fn => { const now = Date.now(); const at = Math.max(now, next); next = at + gap; if (at > now) await sleep(at - now); return fn(); }; }
 function limiter(perSec) { let q = Promise.resolve(), last = 0; const gap = 1000 / perSec; return fn => { const p = q.then(async () => { const w = last + gap - Date.now(); if (w > 0) await sleep(w); last = Date.now(); return fn(); }); q = p.catch(() => {}); return p; }; }
 async function getJSON(url, opt = {}, timeout = 15000) {
   const ac = typeof AbortController !== "undefined" ? new AbortController() : null; const t = ac && setTimeout(() => ac.abort(), timeout);
@@ -36,7 +37,7 @@ function match(title, artist, x) {
 const expOf = ex => (ex === 1 || ex === 4 ? "explicit" : ex === 3 ? "clean" : "");
 
 /* ---------- Deezer ---------- */
-let jpN = 0; const dzLimit = limiter(7);
+let jpN = 0; const dzLimit = pacer(8); /* Deezer allows 50 requests per 5 s */
 function jsonp(url, timeout = 12000) {
   return new Promise((res, rej) => {
     const cb = "__pj" + (++jpN) + "_" + Math.random().toString(36).slice(2, 7); const s = document.createElement("script"); let t = 0;
@@ -70,6 +71,7 @@ const Deezer = {
   async track(id) { const t = await dz("/track/" + id); return t && t.id ? this.parse(t) : null; },
   async byIsrc(isrc) { try { const t = await dz("/track/isrc:" + encodeURIComponent(isrc)); return t && t.id ? this.parse(t) : null; } catch { return null; } },
   async related(id, limit = 20) { const d = await dz(`/artist/${id}/related?limit=${limit}`); return ((d && d.data) || []).map(a => ({ id: a.id, name: a.name, fans: a.nb_fan || 0 })); },
+  async radio(id, limit = 25) { const d = await dz(`/artist/${id}/radio?limit=${limit}`); return ((d && d.data) || []).filter(t => t && t.readable !== false).map(t => this.parse(t)); },
   async top(id, limit = 10) { const d = await dz(`/artist/${id}/top?limit=${limit}`); return ((d && d.data) || []).filter(t => t && t.readable !== false).map(t => this.parse(t)); },
   async genres() { const d = await dz("/genre"); return ((d && d.data) || []).filter(g => g.id).map(g => ({ id: g.id, name: g.name })); },
   async chart(gid, limit = 50) { const d = await dz(`/chart/${gid}/tracks?limit=${limit}`); return ((d && d.data) || []).map(t => this.parse(t)); },
@@ -124,7 +126,7 @@ const MusicBrainz = {
         isrc: (r.isrcs || [])[0] || null, exp: "", dur: Math.round((r.length || 0) / 1000), rank: 0, cov: rg ? `https://coverartarchive.org/release-group/${rg}/front-250` : null, prev: null, link: `https://musicbrainz.org/recording/${r.id}` }; });
   }
 };
-const lbLimit = limiter(2);
+const lbLimit = pacer(3);
 const ListenBrainz = {
   ALG: "session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30",
   async similar(mbid, limit = 12) {
@@ -133,8 +135,78 @@ const ListenBrainz = {
   }
 };
 
+/* ---------- ListenBrainz labs: name→ID lookup, song-to-song similarity, tags, songs by tag ----------
+   All keyless with CORS. Similarity comes from real listening sessions ("people who play X also play Y"). */
+/* api.listenbrainz.org allows 30 per 10 s, labs has no stated limit */
+const paced = lim => fn => lim(fn).catch(async e => { if (e && e.status === 429) { await sleep(Math.min(12, +e.retryAfter || 6) * 1000); return lim(fn); } throw e; });
+const lbxLimit = paced(pacer(6)), lbaLimit = paced(pacer(2.6));
+const postJSON = (url, body, timeout = 20000) => getJSON(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, timeout);
+const LBX = "https://labs.api.listenbrainz.org";
+const LB = {
+  ALG: ["session_based_days_7500_session_300_contribution_5_threshold_15_limit_50_skip_30_top_n_listeners_1000", "session_based_days_1500_session_300_contribution_5_threshold_15_limit_50_skip_30_top_n_listeners_1000"],
+  key: t => Core.norm(Core.baseTitle(t.t) || t.t) + "|" + Core.norm(Core.firstArtist(t.a)),
+  /* tracks → Map(track.id → {rec, artists}) ; tries the first artist, then the full credit */
+  async lookup(tracks) {
+    const out = new Map(); const todo = tracks.filter(t => t && t.t && t.a && !t.mbid);
+    for (const t of tracks) if (t && t.mbid) out.set(t.id, { rec: t.mbid, artists: t.ambids || [] });
+    const title = t => String(t.t).replace(/\s*[\(\[](feat|ft|with)\.?\s[^\)\]]*[\)\]]/ig, "").trim();
+    for (const pass of [t => Core.firstArtist(t.a), t => String(t.a).split(/;\s*/).join(" & ")]) {
+      const left = todo.filter(t => !out.has(t.id)); if (!left.length) break;
+      for (let i = 0; i < left.length; i += 40) {
+        const chunk = left.slice(i, i + 40);
+        let res = []; try { res = await lbxLimit(() => postJSON(`${LBX}/acr-lookup/json`, chunk.map(t => ({ artist_credit_name: pass(t), recording_name: title(t) })))); } catch { continue; }
+        for (const r of res || []) { const t = chunk[r.index]; if (t && r.recording_mbid) { out.set(t.id, { rec: r.recording_mbid, artists: r.artist_mbids || [] }); t.mbid = r.recording_mbid; t.ambids = r.artist_mbids || []; } }
+      }
+      if (pass === undefined) break;
+    }
+    return out;
+  },
+  /* one seed recording → similar recordings [{rec, t, a, score}] */
+  async similar(rec, alg = this.ALG[0]) {
+    try { const d = await lbxLimit(() => getJSON(`${LBX}/similar-recordings/json?recording_mbids=${rec}&algorithm=${alg}`, {}, 25000));
+      return (Array.isArray(d) ? d : []).map(x => ({ rec: x.recording_mbid, t: x.recording_name, a: x.artist_credit_name, score: x.score || 0 })); } catch { return []; }
+  },
+  /* recordings → Map(rec → {tag: weight}) ; weights mix recording-, release- and artist-level tags */
+  async tags(recs) {
+    const out = new Map(); const list = [...new Set(recs.filter(Boolean))];
+    for (let i = 0; i < list.length; i += 50) {
+      let res = []; try { res = await lbxLimit(() => postJSON(`${LBX}/bulk-tag-lookup/json`, list.slice(i, i + 50).map(r => ({ recording_mbid: r })))); } catch { continue; }
+      for (const r of res || []) { const m = out.get(r.recording_mbid) || {}; const w = (r.source === "recording" ? 1.5 : r.source === "release-group" ? 1.2 : 1) * Math.log2(1 + (r.tag_count || 1)); const tg = String(r.tag || "").toLowerCase().trim(); if (tg) m[tg] = (m[tg] || 0) + w; out.set(r.recording_mbid, m); }
+    }
+    for (const r of list) if (!out.has(r)) out.set(r, {});
+    return out;
+  },
+  /* songs carrying a tag; popularity percentile window controls hits vs deep cuts */
+  async byTag(tags, { popBegin = 0, popEnd = 100, count = 100, operator = "OR" } = {}) {
+    const q = tags.map(t => "tag=" + encodeURIComponent(t)).join("&");
+    try { const d = await lbaLimit(() => getJSON(`https://api.listenbrainz.org/1/lb-radio/tags?${q}&operator=${operator}&pop_begin=${popBegin}&pop_end=${popEnd}&count=${count}`, {}, 25000));
+      return (Array.isArray(d) ? d : []).map(x => ({ rec: x.recording_mbid, w: (x.percent || 50) / 100 })); } catch { return []; }
+  },
+  /* recording IDs → names/artist/year */
+  async meta(recs) {
+    const out = new Map(); const list = [...new Set(recs.filter(Boolean))];
+    for (let i = 0; i < list.length; i += 25) {
+      try { const d = await lbaLimit(() => getJSON(`https://api.listenbrainz.org/1/metadata/recording/?recording_mbids=${list.slice(i, i + 25).join(",")}&inc=artist%20release`, {}, 25000));
+        for (const [k, v] of Object.entries(d || {})) out.set(k, { rec: k, t: v.recording && v.recording.name, a: (v.artist && v.artist.name) || "", y: (v.release && v.release.year) || null }); } catch {}
+    }
+    return out;
+  },
+  /* artist IDs → Map(mbid → {name, area, type, tags: {tag: count}}) ; genre tags (with a MusicBrainz genre id) count a bit more */
+  async artists(ambids) {
+    const out = new Map(); const list = [...new Set(ambids.filter(Boolean))];
+    for (let i = 0; i < list.length; i += 25) {
+      let d = null; try { d = await lbaLimit(() => getJSON(`https://api.listenbrainz.org/1/metadata/artist/?artist_mbids=${list.slice(i, i + 25).join(",")}&inc=tag`, {}, 25000)); } catch (e) { if (i === 0 && list.length <= 25) throw e; continue; }
+      for (const a of (Array.isArray(d) ? d : Object.values(d || {}))) { if (!a || !a.artist_mbid) continue; const tags = {};
+        for (const x of (a.tag && a.tag.artist) || []) { const tg = String(x.tag || "").toLowerCase().trim(); if (tg) tags[tg] = (tags[tg] || 0) + Math.max(1, x.count || 1) * (x.genre_mbid ? 1.5 : 1); }
+        out.set(a.artist_mbid, { name: a.name || "", area: a.area || "", type: a.type || "", tags }); }
+    }
+    return out;
+  },
+  async tagSimilar(tag) { try { const d = await lbxLimit(() => getJSON(`${LBX}/tag-similarity/json?tag=${encodeURIComponent(tag)}`)); return (Array.isArray(d) ? d : []).map(x => ({ tag: String(x.similar_tag).toLowerCase(), count: x.count || 0 })); } catch { return []; } }
+};
+
 /* ---------- ReccoBeats (audio features + popularity, by ISRC) ---------- */
-const rbLimit = limiter(4);
+const rbLimit = pacer(4);
 const ReccoBeats = {
   async features(isrcs) {
     const out = new Map(); const list = [...new Set(isrcs.filter(Boolean))];
@@ -234,7 +306,7 @@ function guessLang(title) {
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];
 }
 
-const API = { SETTINGS, limiter, sleep, https, getJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
+const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, LB, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
 G.Catalog = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

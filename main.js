@@ -40,11 +40,11 @@ function dirDetails(pl) {
   if ((d.artists || []).length) lines.push("Reference artists: " + d.artists.map(a => a.name).join(", "));
   const must = pl.order.filter(x => pl.rels[x].mandatory).length; if (must) lines.push(`Must-include: ${must} song${must === 1 ? "" : "s"}`);
   const ln = k => (LANGS.find(x => x[0] === k) || [k, k])[1];
-  const tr = []; if ((f.genres || []).length) tr.push(f.genres.map(g => g.name).join(", ")); if ((f.keywords || []).length) tr.push(f.keywords.join(", ")); if ((f.moods || []).length) tr.push(f.moods.join(", ").toLowerCase()); if (f.energy) tr.push(f.energy + " energy");
+  const tr = []; if ((f.genres || []).length) tr.push(f.genres.map(g => g.name).join(", ")); if ((f.keywords || []).length) tr.push(f.keywords.join(", ")); if ((f.notStyles || []).length) tr.push("no " + f.notStyles.join(" or ")); if ((f.moods || []).length) tr.push(f.moods.join(", ").toLowerCase()); if (f.energy) tr.push(f.energy + " energy");
   if (Array.isArray(f.bpm) && f.bpm[0]) tr.push(`${f.bpm[0]}–${f.bpm[1]} BPM`); else if (f.tempo) tr.push(f.tempo + " tempo");
   if (f.era) tr.push(`${f.era[0]}–${f.era[1]}`); if ((f.langs || []).length) tr.push("in " + f.langs.map(ln).join(" or ")); if ((f.notLangs || []).length) tr.push("nothing in " + f.notLangs.map(ln).join(" or "));
   if (f.explicit === "clean") tr.push("clean only"); if (f.explicit === "explicit") tr.push("explicit preferred");
-  if (f.avoidHits) tr.push("skipping the most-played hits"); if (f.preferHits) tr.push("leaning popular"); tr.push(f.versions ? "other versions OK" : "original versions only"); lines.push(tr.join(", "));
+  if (f.gems) tr.push("lesser-known artists and deep cuts"); else if (f.avoidHits) tr.push("skipping the most-played hits"); if (f.preferHits) tr.push("leaning popular"); tr.push(f.versions ? "other versions OK" : "original versions only"); lines.push(tr.join(", "));
   if ((ex.artists || []).length) lines.push("Never: " + ex.artists.join(", ")); if ((ex.songs || []).length) lines.push(`Never include: ${ex.songs.length} song${ex.songs.length === 1 ? "" : "s"}`);
   return h("div", {}, lines.map(l => h("p", { class: "small", style: "margin:2px 0", text: l })));
 }

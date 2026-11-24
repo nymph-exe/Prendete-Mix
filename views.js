@@ -74,7 +74,7 @@ function firstAi() { return ["gemini", "openrouter"].find(aiReady) || null; }
 function defaultModel(p) { return "auto"; }
 function aiCtx(eng) { const p = eng && eng.provider; const a = (p && S.meta.ai[p]) || {}; return { provider: p, model: (eng && eng.model) || "auto", key: a.key || null, models: a.models || [], memo: a.memo || {}, onMemo: memo => { if (S.meta.ai[p]) { S.meta.ai[p].memo = memo; saveMeta().catch(() => {}); } } }; }
 function engineLabel(eng) { if (!eng || eng.mode !== "ai") return "Classic"; const p = Engines.PROVIDERS[eng.provider]; return `AI (${p ? p.label.replace(/ \(.*\)/, "") : "?"}, ${!eng.model || eng.model === "auto" ? "automatic model" : eng.model})`; }
-const CLASSIC_NOTE = "Classic reads your description with built-in rules, then finds songs through Deezer's related artists and editorial playlists, ListenBrainz listening data, ReccoBeats audio features (energy, tempo, mood) and LRCLIB lyrics (language). It learns from what you approve and reject here.";
+const CLASSIC_NOTE = "Classic reads your description with built-in rules and recognizes over 2,000 genre names. It finds songs through Deezer's related artists, artist radios and editorial playlists, and ListenBrainz listening habits. It keeps to your genres using MusicBrainz community tags, checks energy, tempo and mood with ReccoBeats, and checks the language with LRCLIB lyrics. It learns from what you approve and reject here.";
 function enginePicker(eng, onchange) {
   const box = h("div");
   const draw = () => {
@@ -99,7 +99,7 @@ function enginePicker(eng, onchange) {
 }
 
 /* ---------- direction editor (creation + later edits) ---------- */
-function emptyDir() { return { text: "", refs: [], artists: [], exclude: { artists: [], songs: [] }, form: { genres: [], keywords: [], moods: [], energy: "", tempo: "", bpm: null, era: null, langs: [], notLangs: [], explicit: "any", versions: false, avoidHits: false, preferHits: false } }; }
+function emptyDir() { return { text: "", refs: [], artists: [], exclude: { artists: [], songs: [] }, form: { genres: [], keywords: [], notStyles: [], moods: [], energy: "", tempo: "", bpm: null, era: null, langs: [], notLangs: [], explicit: "any", versions: false, avoidHits: false, preferHits: false } }; }
 async function loadGenres() { if (S.genres && S.genres.length) return S.genres; try { S.genres = await Catalog.Deezer.genres(); } catch { S.genres = []; } return S.genres; }
 const LANGS = Object.entries(Catalog.LANG_NAMES);
 function chipToggle(label, on, fn, cls = "") { return h("button", { class: "chip " + cls, type: "button", "aria-pressed": String(!!on), onclick: fn }, label); }
@@ -115,6 +115,8 @@ function formEditor(form, o = {}) {
     box.append(h("div", { class: "field" }, h("span", { class: "lbl", text: "Genres" }), gl));
     form.keywords = form.keywords || [];
     box.append(namesEditor(form.keywords, "Styles and scenes (optional)", "e.g. lofi, amapiano, corridos tumbados"));
+    form.notStyles = form.notStyles || [];
+    box.append(namesEditor(form.notStyles, "Styles to leave out (optional)", "e.g. edm, metal"));
     const ml = h("div", { class: "chips wrapc", role: "group", "aria-label": "Moods" }); const mo = new Set(form.moods || []);
     Object.keys(Engines.MOODS).concat((form.moods || []).filter(m => !Engines.MOODS[m])).forEach(md => ml.append(chipToggle(md, mo.has(md), () => { form.moods = mo.has(md) ? form.moods.filter(x => x !== md) : [...(form.moods || []), md]; draw(); })));
     box.append(h("div", { class: "field" }, h("span", { class: "lbl", text: "Moods" }), ml));
@@ -135,7 +137,7 @@ function formEditor(form, o = {}) {
       ll.append(chipToggle(st === 2 ? "No " + l : l, st === 1, () => { form.langs = form.langs.filter(x => x !== k); form.notLangs = form.notLangs.filter(x => x !== k); if (st === 0) form.langs.push(k); else if (st === 1) form.notLangs.push(k); draw(); }, st === 2 ? "no" : "")); });
     box.append(h("div", { class: "field" }, h("span", { class: "lbl", text: "Languages (optional)" }), ll, h("span", { class: "small", text: "Tap once to want a language, twice to rule it out. Checked against each song's lyrics; instrumentals always pass." })));
     box.append(segPick("Explicit or clean", [["any", "Either"], ["clean", "Clean"], ["explicit", "Explicit"]], form.explicit || "any", k => { form.explicit = k; draw(); }));
-    box.append(segPick("Popularity", [["", "Any"], ["avoid", "Skip big hits"], ["prefer", "Lean popular"]], form.avoidHits ? "avoid" : form.preferHits ? "prefer" : "", k => { form.avoidHits = k === "avoid"; form.preferHits = k === "prefer"; draw(); }));
+    box.append(segPick("Popularity", [["", "Any"], ["avoid", "Fewer hits"], ["gems", "Gems"], ["prefer", "Popular"]], form.gems ? "gems" : form.avoidHits ? "avoid" : form.preferHits ? "prefer" : "", k => { form.avoidHits = k === "avoid" || k === "gems"; form.gems = k === "gems"; form.preferHits = k === "prefer"; draw(); }));
     const v1 = h("input", { type: "checkbox" }); v1.checked = !!form.versions; v1.onchange = () => (form.versions = v1.checked);
     box.append(h("label", { class: "chk" }, v1, "Remixes, live, sped-up and acoustic versions are OK"));
   };
