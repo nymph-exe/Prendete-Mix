@@ -1,4 +1,4 @@
-/* Préndete Mix — Classic description reader. Rule-based (no AI): reads a typed description in English or Spanish
+/* MIXER (internally the Préndete app) — Classic description reader. Rule-based (no AI): reads a typed description in English or Spanish
    and returns the same structure the AI reader returns, so both feed the same preview and the same engine.
    Names it finds are only candidates; the app verifies every one against the catalog before using it. */
 (function (G) {
@@ -160,6 +160,7 @@ function read(text) {
   for (const x of hits(low, HITS_AVOID, cls)) if (x.neg) tr.avoidHits = true;
   for (const x of hits(low, HITS_NICHE, cls)) if (!x.neg) { tr.avoidHits = true; tr.gems = true; }
   if (/\bslow jams?\b/.test(low) && !tr.tempo && !tr.bpm) tr.tempo = "slow";
+  if (/\b(slow jams?|baladas?|ballads?)\b/.test(low) && !tr.energy) tr.energy = "low";
   if (!tr.avoidHits) for (const x of hits(low, HITS_PREFER, cls)) if (!x.neg && !x.allowed) tr.preferHits = true;
   // names: quoted titles, "Title by Artist", then cue-word lists, "X vibes", Capitalized names
   const seen = new Set(); const role = (s, base) => base;

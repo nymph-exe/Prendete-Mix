@@ -1,4 +1,4 @@
-/* Préndete Mix — shared UI: icons, helpers, storage, the single mutation path, sheets, rows, player. */
+/* MIXER (internally the Préndete app) — shared UI: icons, helpers, storage, the single mutation path, sheets, rows, player. */
 "use strict";
 const IC = {play:"M8 5v14l11-7z",pause:"M6 19h4V5H6v14zm8-14v14h4V5h-4z",next:"M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z",prev:"M6 6h2v12H6zm3.5 6l8.5 6V6z",
 check:"M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",x:"M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
@@ -182,7 +182,7 @@ A.addEventListener("timeupdate", () => { if (P.loading) return; const d = A.dura
 function markRows() { $$(".row.cur,.rcard.cur").forEach(r => r.classList.remove("cur", "playing")); if (!P.k) return; $$(`[data-k="${CSS.escape(P.k)}"]`).forEach(r => { r.classList.add("cur"); r.classList.toggle("playing", !A.paused && !P.loading); }); }
 function showPlayer() { const t = getTrack(P.k); if (!t) return; $("#player").hidden = false; $("#pcov").replaceChildren(h("div", { class: "cov" }, coverEl(t))); $("#pt").textContent = t.t; $("#pm").textContent = artistsOf(t.a); updatePlayBtns(); if (!$("#npw").hidden) renderNp(); }
 function updatePlayBtns() { const paused = A.paused || P.loading; for (const id of ["#pplay", "#nplay"]) { const b = $(id); b.innerHTML = I(paused ? "play" : "pause"); b.setAttribute("aria-label", paused ? "Play" : "Pause"); } }
-function media(t) { if (!("mediaSession" in navigator)) return; try { navigator.mediaSession.metadata = new MediaMetadata({ title: t.t, artist: artistsOf(t.a), album: t.al || "Préndete Mix", artwork: https(t.cov) && !/^data:/.test(t.cov) ? [{ src: t.cov, sizes: "250x250" }] : [] });
+function media(t) { if (!("mediaSession" in navigator)) return; try { navigator.mediaSession.metadata = new MediaMetadata({ title: t.t, artist: artistsOf(t.a), album: t.al || "MIXER", artwork: https(t.cov) && !/^data:/.test(t.cov) ? [{ src: t.cov, sizes: "250x250" }] : [] });
   navigator.mediaSession.setActionHandler("play", () => A.play().catch(playErr)); navigator.mediaSession.setActionHandler("pause", () => A.pause()); navigator.mediaSession.setActionHandler("nexttrack", next); navigator.mediaSession.setActionHandler("previoustrack", prev); } catch {} }
 let npLast = null;
 function openNp() { npLast = document.activeElement; renderNp(); $("#npw").hidden = false; $("#npw .x").focus(); }

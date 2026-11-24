@@ -1,4 +1,4 @@
-/* Préndete Mix — core playlist rules.
+/* MIXER (internally the Préndete app) — core playlist rules.
    Pure logic (no DOM), shared by the app and the tests. Implements the Master Ruleset:
    playlist isolation, three song states, capacity as a ceiling, additive recalibration,
    delegated random fill, rejection = removal, explicit completion, preserve/reset edits. */
@@ -40,7 +40,7 @@ function firstArtist(a) { return String(a || "").split(/;|,|&| x | feat\.? | ft\
 const VTAGS = [
   ["remix", /\bre-?mix(ed)?\b|\brmx\b/], ["live", /\blive\b|\ben vivo\b|\bao vivo\b/], ["acoustic", /\bacoustic\b|\bac[uú]stic[oa]\b|\bunplugged\b/],
   ["sped up", /\bsped[ -]?up\b|\bspeed[ -]?up\b/], ["slowed", /\bslowed\b/], ["instrumental", /\binstrumental\b/], ["karaoke", /\bkaraoke\b/],
-  ["a cappella", /\ba ?cap+el+a\b/], ["demo", /\bdemo\b/], ["extended", /\bextended\b/], ["cover", /\bcover\b/], ["nightcore", /\bnightcore\b/],
+  ["a cappella", /\ba ?cap+el+a\b/], ["language version", /\b(japanese|korean|english|chinese|spanish|portuguese|french|german|thai|mandarin|cantonese) ?ver(\.|sion)?(?=[\s\)\]-]|$)/], ["demo", /\bdemo\b/], ["extended", /\bextended\b/], ["cover", /\bcover\b/], ["nightcore", /\bnightcore\b/],
   ["8d", /\b8d\b/], ["edit", /\b(tiktok|clean) edit\b/]
 ];
 function versionTags(t) { const s = String(t || "").toLowerCase(); return VTAGS.filter(([, re]) => re.test(s)).map(([n]) => n).sort(); }

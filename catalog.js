@@ -1,4 +1,4 @@
-/* Préndete Mix — catalog sources (Lucida-style: each source has its own transport and parser,
+/* MIXER (internally the Préndete app) — catalog sources (Lucida-style: each source has its own transport and parser,
    all produce one Track shape). Works in the browser (Deezer via JSONP) and in Node (fetch) for tests.
    Track: {id, dz?, it?, t, a ('A; B'), aid[], al, y, isrc, ex, exp ('explicit'|'clean'|''), dur, rank, cov, prev, prevAt, link, sp, f?} */
 (function (G) {
@@ -107,7 +107,7 @@ const ITunes = {
 
 /* ---------- MusicBrainz / Cover Art Archive / ListenBrainz ---------- */
 const mbLimit = limiter(1);
-const MB = { headers: { Accept: "application/json" } };
+const MB = { headers: BROWSER ? { Accept: "application/json" } : { Accept: "application/json", "User-Agent": "MIXER/3 (github.com/nymph-exe/Prendete-Mix)" } }; /* browsers send their own User-Agent */
 const MusicBrainz = {
   async artistMbid(name) {
     try { const d = await mbLimit(() => getJSON(`https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent('artist:"' + name.replace(/"/g, "") + '"')}&fmt=json&limit=3`, MB));
@@ -167,11 +167,11 @@ const LB = {
       return (Array.isArray(d) ? d : []).map(x => ({ rec: x.recording_mbid, t: x.recording_name, a: x.artist_credit_name, score: x.score || 0 })); } catch { return []; }
   },
   /* recordings → Map(rec → {tag: weight}) ; weights mix recording-, release- and artist-level tags */
-  async tags(recs) {
+  async tags(recs, { own = false } = {}) {
     const out = new Map(); const list = [...new Set(recs.filter(Boolean))];
     for (let i = 0; i < list.length; i += 50) {
       let res = []; try { res = await lbxLimit(() => postJSON(`${LBX}/bulk-tag-lookup/json`, list.slice(i, i + 50).map(r => ({ recording_mbid: r })))); } catch { continue; }
-      for (const r of res || []) { const m = out.get(r.recording_mbid) || {}; const w = (r.source === "recording" ? 1.5 : r.source === "release-group" ? 1.2 : 1) * Math.log2(1 + (r.tag_count || 1)); const tg = String(r.tag || "").toLowerCase().trim(); if (tg) m[tg] = (m[tg] || 0) + w; out.set(r.recording_mbid, m); }
+      for (const r of res || []) { if (own && r.source === "artist") continue; const m = out.get(r.recording_mbid) || {}; const w = (r.source === "recording" ? 1.5 : r.source === "release-group" ? 1.2 : 1) * Math.log2(1 + (r.tag_count || 1)); const tg = String(r.tag || "").toLowerCase().trim(); if (tg) m[tg] = (m[tg] || 0) + w; out.set(r.recording_mbid, m); }
     }
     for (const r of list) if (!out.has(r)) out.set(r, {});
     return out;
@@ -198,11 +198,37 @@ const LB = {
       let d = null; try { d = await lbaLimit(() => getJSON(`https://api.listenbrainz.org/1/metadata/artist/?artist_mbids=${list.slice(i, i + 25).join(",")}&inc=tag`, {}, 25000)); } catch (e) { if (i === 0 && list.length <= 25) throw e; continue; }
       for (const a of (Array.isArray(d) ? d : Object.values(d || {}))) { if (!a || !a.artist_mbid) continue; const tags = {};
         for (const x of (a.tag && a.tag.artist) || []) { const tg = String(x.tag || "").toLowerCase().trim(); if (tg) tags[tg] = (tags[tg] || 0) + Math.max(1, x.count || 1) * (x.genre_mbid ? 1.5 : 1); }
-        out.set(a.artist_mbid, { name: a.name || "", area: a.area || "", type: a.type || "", tags }); }
+        out.set(a.artist_mbid, { name: a.name || "", area: a.area || "", type: a.type || "", by: +a.begin_year || null, tags }); }
     }
     return out;
   },
   async tagSimilar(tag) { try { const d = await lbxLimit(() => getJSON(`${LBX}/tag-similarity/json?tag=${encodeURIComponent(tag)}`)); return (Array.isArray(d) ? d : []).map(x => ({ tag: String(x.similar_tag).toLowerCase(), count: x.count || 0 })); } catch { return []; } }
+};
+
+/* ---------- Discogs: release styles (very fine-grained: "UK Drill", "Lo-Fi", "Bachata"…). No key; 25 requests a minute ---------- */
+const dgLimit = paced(pacer(.4));
+const Discogs = {
+  /* an artist's styles across their releases → {style: weight} (styles count fully, broad genres half) */
+  async styles(name) {
+    const d = await dgLimit(() => getJSON(`https://api.discogs.com/database/search?artist=${encodeURIComponent(name)}&type=master&per_page=20`, {}, 15000));
+    const out = {}; let n = 0;
+    for (const r of (d && d.results) || []) { const t = String(r.title || ""); const who = t.split(" - ")[0]; if (mnorm(who) !== mnorm(name) && !mnorm(who).startsWith(mnorm(name))) continue; n++;
+      for (const s of r.style || []) out[s.toLowerCase()] = (out[s.toLowerCase()] || 0) + 1; for (const g of r.genre || []) out[g.toLowerCase()] = (out[g.toLowerCase()] || 0) + .5; }
+    return n ? out : null;
+  }
+};
+/* ---------- Wikidata: genres of artists, by MusicBrainz artist ID (one query for many artists) ---------- */
+const wdLimit = paced(pacer(1));
+const Wikidata = {
+  async genres(mbids) {
+    const out = new Map(); const list = [...new Set(mbids.filter(x => /^[0-9a-f-]{36}$/.test(x || "")))];
+    for (let i = 0; i < list.length; i += 60) {
+      const q = `SELECT ?mb ?gl WHERE { VALUES ?mb { ${list.slice(i, i + 60).map(x => `"${x}"`).join(" ")} } ?a wdt:P434 ?mb; wdt:P136 ?g. ?g rdfs:label ?gl FILTER(lang(?gl)="en") }`;
+      try { const d = await wdLimit(() => getJSON("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q), { headers: BROWSER ? { Accept: "application/sparql-results+json" } : { Accept: "application/sparql-results+json", "User-Agent": "MIXER/3 (github.com/nymph-exe/Prendete-Mix)" } }, 20000));
+        for (const b of (d.results && d.results.bindings) || []) { const k = b.mb.value, g = String(b.gl.value).toLowerCase().replace(/ music$/, ""); out.set(k, [...(out.get(k) || []), g]); } } catch {}
+    }
+    return out;
+  }
 };
 
 /* ---------- ReccoBeats (audio features + popularity, by ISRC) ---------- */
@@ -306,7 +332,7 @@ function guessLang(title) {
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];
 }
 
-const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, LB, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
+const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, LB, Discogs, Wikidata, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
 G.Catalog = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

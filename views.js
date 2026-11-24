@@ -1,4 +1,4 @@
-/* Préndete Mix — views. Dashboard → playlist workspaces (Section 3). Nothing here is a global rating queue. */
+/* MIXER (internally the Préndete app) — views. Dashboard → playlist workspaces (Section 3). Nothing here is a global rating queue. */
 "use strict";
 /* ---------- routing ---------- */
 function parseRoute() {
@@ -20,8 +20,8 @@ function render(nav) {
 function refresh(id) { const r = S.route; if (r.v === "home") return render(); if (r.v === "pl" && r.id === id) { if (r.tab === "settings") return updateHead(id); render(); } }
 function setTop(title, sub, back) {
   $("#gear").hidden = S.route.v === "settings";
-  $("#ttl").textContent = title; const s = $("#sub"); s.replaceChildren(); if (sub) s.append(...[].concat(sub)); $("#back").hidden = !back; $("#back").onclick = () => go(back);
-  document.title = title === "Préndete Mix" ? title : title + " · Préndete Mix";
+  $("#ttl").textContent = title; $("#ttl").classList.toggle("brand", title === "MIXER"); const s = $("#sub"); s.replaceChildren(); if (sub) s.append(...[].concat(sub)); $("#back").hidden = !back; $("#back").onclick = () => go(back);
+  document.title = title === "MIXER" ? title : title + " · MIXER";
 }
 const statusLabel = pl => (pl.status === "COMPLETED" ? "Completed" : "In progress");
 const statusPill = pl => h("span", { class: "pill" + (pl.status === "COMPLETED" ? " done" : ""), text: statusLabel(pl) });
@@ -47,7 +47,7 @@ function mosaic(pl) {
 function vHome(v) {
   const all = S.meta.order.map(id => S.pls.get(id)).filter(Boolean);
   const nIn = all.filter(p => p.status === "IN_PROGRESS").length, nDone = all.length - nIn;
-  setTop("Préndete Mix", h("span", { text: `${plural(all.length, "playlist")}, ${nIn} in progress, ${nDone} completed` }), null);
+  setTop("MIXER", h("span", { text: `${plural(all.length, "playlist")}, ${nIn} in progress, ${nDone} completed` }), null);
   const m = h("main", { class: "wrap" }); v.append(m);
   m.append(h("div", { class: "btns", style: "margin-top:14px" }, btn("Create a playlist", "red", () => { S.create = null; go("#/new"); }, { ic: "plus" })));
   if (S.meta.migrated && !S.meta.migrated.seen) {
@@ -74,7 +74,7 @@ function firstAi() { return ["gemini", "openrouter"].find(aiReady) || null; }
 function defaultModel(p) { return "auto"; }
 function aiCtx(eng) { const p = eng && eng.provider; const a = (p && S.meta.ai[p]) || {}; return { provider: p, model: (eng && eng.model) || "auto", key: a.key || null, models: a.models || [], memo: a.memo || {}, onMemo: memo => { if (S.meta.ai[p]) { S.meta.ai[p].memo = memo; saveMeta().catch(() => {}); } } }; }
 function engineLabel(eng) { if (!eng || eng.mode !== "ai") return "Classic"; const p = Engines.PROVIDERS[eng.provider]; return `AI (${p ? p.label.replace(/ \(.*\)/, "") : "?"}, ${!eng.model || eng.model === "auto" ? "automatic model" : eng.model})`; }
-const CLASSIC_NOTE = "Classic reads your description with built-in rules and recognizes over 2,000 genre names. It finds songs through Deezer's related artists, artist radios and editorial playlists, and ListenBrainz listening habits. It keeps to your genres using MusicBrainz community tags, checks energy, tempo and mood with ReccoBeats, and checks the language with LRCLIB lyrics. It learns from what you approve and reject here.";
+const CLASSIC_NOTE = "Classic reads your description with built-in rules and recognizes over 2,000 genre names. It finds songs through Deezer (related artists, artist radios, editorial playlists) and ListenBrainz listening habits, keeps to your genres with MusicBrainz, Wikidata and Discogs genre data, checks energy, tempo and mood with ReccoBeats (or by listening to the 30-second preview when a song is too new), and checks the language with LRCLIB lyrics. It learns from what you approve and reject here.";
 function enginePicker(eng, onchange) {
   const box = h("div");
   const draw = () => {

@@ -1,19 +1,23 @@
-# Préndete Mix
+# MIXER
 
 A playlist maker that runs entirely in the browser: https://nymph-exe.github.io/Prendete-Mix/
 
+Internally it's still the Préndete app, named after the playlist that started it (Préndete 🔥).
+
 Each playlist has its own direction, capacity, recommendations, rejections and status. Nothing is shared between playlists.
 
-- **Classic** recommendations: reads a typed description (English or Spanish) with built-in rules and recognizes 2,000+ genre names (the MusicBrainz genre list). It finds songs through Deezer related artists, artist radios, charts and editorial playlists, plus ListenBrainz listening data (similar artists, songs played together, songs tagged with a genre). Every candidate artist is checked against MusicBrainz community genre tags so picks stay in the requested style. ReccoBeats audio features (energy, tempo, mood) and LRCLIB lyrics (language) do the rest. Tuned by what you approve and reject in that playlist.
+- **Classic** recommendations, with no AI and no keys: reads a typed description (English or Spanish) with built-in rules and recognizes 2,000+ genre names (the MusicBrainz genre list). It finds songs through Deezer (related artists, artist radios, editorial playlists) and ListenBrainz listening data (similar artists, songs played together, songs tagged with a genre). Every artist, and each song's lead artist, is checked against genre data from MusicBrainz/ListenBrainz tags, Wikidata and Discogs styles, plus the song's own listener tags, so picks stay in the requested style. Release years are checked against MusicBrainz first releases. Energy, tempo and mood come from ReccoBeats, or for songs too new for it, from **Listen**: the app analyzes the 30-second Deezer preview with Meyda (MIT) and a small model fitted on 426 songs (energy r = 0.82). LRCLIB lyrics tell each song's language. Tuned by what you approve and reject in that playlist, including steering away from the neighbourhood of artists you keep rejecting.
 - **AI** recommendations: Google Gemini or OpenRouter with your own free key. Every suggestion is looked up in Deezer / Apple Music before it's added. Claude and ChatGPT subscriptions are a work in progress.
 - Data lives in this browser (IndexedDB). Use Settings → Save backup to keep a copy or move devices.
 
 | File | What it does |
 |---|---|
 | `core.js` | Playlist rules: song states, capacity, operations, identity, invariants |
-| `catalog.js` | Deezer, Apple Music, MusicBrainz, ListenBrainz (similar artists and songs, genre tags), ReccoBeats, LRCLIB (lyrics → language) |
+| `catalog.js` | Deezer, Apple Music, MusicBrainz, ListenBrainz (similar artists and songs, genre tags), Discogs (styles), Wikidata (genres), ReccoBeats, LRCLIB (lyrics → language) |
 | `reader.js` | Classic's description reader (genres, styles, moods, BPM, years, languages, artists, songs, exclusions) |
 | `genres.js` | MusicBrainz genre list (CC0), so descriptions can name any genre |
+| `listen.js` | Listen: energy, danceability, mood and tempo estimated from a song's preview |
+| `vendor/meyda.min.js` | Meyda 5.6.3 audio features (MIT) |
 | `engines.js` | Classic and AI recommendation engines |
 | `migrate.js` | Moves Préndete 🔥 from the old single-playlist app |
 | `ui.js`, `views.js`, `main.js` | Interface, storage, jobs |
@@ -21,3 +25,4 @@ Each playlist has its own direction, capacity, recommendations, rejections and s
 | `tests/core.test.js` | `node tests/core.test.js` checks the rules against the ruleset's acceptance tests |
 | `tests/reader.test.js` | `node tests/reader.test.js` checks the description reader |
 | `tests/style.test.js` | `node tests/style.test.js` checks Classic's genre matching |
+| `tests/listen.test.js` | `npm install meyda && node tests/listen.test.js` checks the preview analyzer |

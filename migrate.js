@@ -1,4 +1,4 @@
-/* Préndete Mix — migration from the single-playlist app (Section 19). Pure: takes the seed file and the old
+/* MIXER (internally the Préndete app) — migration from the single-playlist app (Section 19). Pure: takes the seed file and the old
    app's saved data (if this browser has it) and returns playlists + tracks. Nothing is approved that wasn't,
    nothing pending is approved, nothing is truncated, and records with no clear home are kept aside. */
 (function (G) {
