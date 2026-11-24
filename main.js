@@ -45,7 +45,7 @@ function dirDetails(pl) {
   if (f.era) tr.push(`${f.era[0]}–${f.era[1]}`); if ((f.langs || []).length) tr.push("in " + f.langs.map(ln).join(" or ")); if ((f.notLangs || []).length) tr.push("nothing in " + f.notLangs.map(ln).join(" or "));
   if (f.explicit === "clean") tr.push("clean only"); if (f.explicit === "explicit") tr.push("explicit preferred");
   if (f.crowd) tr.push("crowd-pleasers"); if (f.gems) tr.push("lesser-known artists and deep cuts"); else if (f.avoidHits) tr.push("skipping the most-played hits"); if (f.preferHits) tr.push("leaning popular"); tr.push(f.versions ? "other versions OK" : "original versions only"); lines.push(tr.join(", "));
-  if ((ex.artists || []).length) lines.push("Never: " + ex.artists.join(", ")); if ((ex.songs || []).length) lines.push(`Never include: ${ex.songs.length} song${ex.songs.length === 1 ? "" : "s"}`);
+  if ((ex.artists || []).length) lines.push("Never: " + ex.artists.map(Artists.nameOf).join(", ")); if ((ex.songs || []).length) lines.push(`Never include: ${ex.songs.length} song${ex.songs.length === 1 ? "" : "s"}`);
   return h("div", {}, lines.map(l => h("p", { class: "small", style: "margin:2px 0", text: l })));
 }
 function shrink(file) {
@@ -130,8 +130,8 @@ function vSettings(v) {
       h("div", { class: "inl" }, key, btn(a.key ? "Check again" : "Save key", "sm", save), a.key ? btn("Remove", "ghost sm", async () => { delete S.meta.ai[k]; await saveMeta().catch(() => {}); toast("Key removed."); render(); }) : null), stat));
   }
   m.append(ai);
-  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Never suggest" }), h("p", { class: "lede", text: "Artists no playlist should ever suggest, as lead or featured. This is your own list, not something learned from playlists. Changes save right away." }),
-    namesEditor(S.meta.never, "Artists", "Artist name", () => act(() => saveMeta(), "Saved."))));
+  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Never suggest" }), h("p", { class: "lede", text: "Artists no playlist should ever suggest, as lead or featured. Search and pick the artist you mean: they're matched by their IDs on Deezer, MusicBrainz and Apple Music, so other artists who share the name stay allowed. Changes save right away." }),
+    banEditor(S.meta.never, { label: "Artists", onchange: () => act(() => saveMeta(), "Saved.") })));
   const cc = h("select", { "aria-label": "Apple Music store", onchange: e => { S.meta.country = e.target.value; Catalog.SETTINGS.country = e.target.value; saveMeta().catch(() => {}); toast("Saved."); } });
   [["us", "United States"], ["pa", "Panamá"], ["mx", "México"], ["es", "España"], ["co", "Colombia"], ["pr", "Puerto Rico"], ["ar", "Argentina"], ["br", "Brasil"], ["gb", "United Kingdom"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === S.meta.country) o.selected = true; cc.append(o); });
   const an = h("input", { type: "checkbox", onchange: e => { S.meta.autoNext = e.target.checked; saveMeta().catch(() => {}); } }); an.checked = !!S.meta.autoNext;
@@ -163,7 +163,7 @@ async function restoreBackup(file) {
   try { data.playlists.forEach(Core.validate); } catch (e) { return toast("The backup is damaged (" + e.message + "). Nothing changed."); }
   const ok = await confirmSheet({ title: "Restore this backup?", text: `Replaces everything in this browser with the backup from ${new Date(data.at).toLocaleString()}: ${plural(data.playlists.length, "playlist")}. Your AI keys stay.`, ok: "Replace with backup" }); if (!ok) return;
   for (const j of S.jobs.values()) j.stop = true;
-  const meta = Object.assign({}, data.meta || {}, { ai: S.meta.ai, order: data.playlists.map(p => p.id) });
+  const meta = Object.assign({}, data.meta || {}, { ai: S.meta.ai, order: data.playlists.map(p => p.id), bansV2: 1 });
   const ops = [...S.pls.keys()].map(k => ({ store: "kv", key: "pl:" + k, del: true })).concat([...S.snaps.keys()].map(k => ({ store: "kv", key: "snap:" + k, del: true })),
     data.playlists.map(p => ({ store: "kv", key: "pl:" + p.id, value: p })), (data.snaps || []).map(([k, v]) => ({ store: "kv", key: "snap:" + k, value: v })), (data.tracks || []).filter(t => t && t.id).map(t => ({ store: "tracks", value: t })), [{ store: "kv", key: "meta", value: meta }]);
   try { await DB.tx(ops); } catch (e) { return toast(e.message || "Couldn't restore. Nothing changed."); }
@@ -235,6 +235,20 @@ async function startJob(id, kind) {
 }
 
 /* ---------- quiet background job: language tags for songs already in playlists (lyrics via LRCLIB) ---------- */
+/* "Never suggest" lists from before artist IDs. Once: the Settings list keeps only DaBaby (asked for on
+   24 Nov 2026). Then plain names are linked to a real artist when one is the clear answer; the rest stay
+   plain (exact full-name match only) and the editor offers "Choose the artist". */
+async function upgradeBans() {
+  const key = e => Core.norm(Artists.nameOf(e)).replace(/\s+/g, "");
+  if (!S.meta.bansV2) { S.meta.never = (S.meta.never || []).filter(e => key(e) === "dababy"); S.meta.bansV2 = 1; await saveMeta().catch(() => {}); if (S.route && S.route.v === "settings") render(); }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  const tried = new Map(); const linkOf = async n => { const k = key(n); if (!tried.has(k)) tried.set(k, await Artists.link(Artists.nameOf(n)).catch(() => null)); return tried.get(k); };
+  for (const n of (S.meta.never || []).filter(e => !Artists.isLinked(e))) { const e = await linkOf(n); if (!e) continue; const i = S.meta.never.indexOf(n); if (i >= 0) { S.meta.never[i] = e; await saveMeta().catch(() => {}); } }
+  for (const id of [...S.pls.keys()]) { const p = S.pls.get(id); const L = (p && p.direction && p.direction.exclude && p.direction.exclude.artists) || [];
+    for (const n of L.filter(e => !Artists.isLinked(e))) { const e = await linkOf(n); if (!e) continue;
+      await mutate(id, q => { const M = q.direction.exclude.artists; const i = M.findIndex(x => x === n); if (i >= 0) M[i] = e; }, { quiet: true }).catch(() => {}); } }
+  if (S.route && S.route.v === "settings") render();
+}
 async function backfillLanguages() {
   const ids = new Set(); for (const pl of S.pls.values()) for (const k in pl.rels) if (pl.rels[k].state !== "REJECTED") ids.add(k);
   const need = [...ids].map(getTrack).filter(t => t && !t.lang).slice(0, 400);
@@ -274,6 +288,7 @@ async function boot() {
   Catalog.SETTINGS.country = S.meta.country;
   S.route = parseRoute(); render(true);
   setTimeout(backfillLanguages, 4000);
+  setTimeout(() => upgradeBans().catch(() => {}), 2500);
   if (DB.mode === "ls") toast("This browser blocks the app's database, so it's using simpler storage with less room. Save backups often.", 7000);
 }
 boot();

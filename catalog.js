@@ -59,7 +59,7 @@ const Deezer = {
   id: "deezer", label: "Deezer",
   parse(t) {
     const al = t.album || {}; const cs0 = t.contributors && t.contributors.length ? t.contributors : [t.artist].filter(Boolean);
-    const cs = cs0.filter((c, i) => c && cs0.findIndex(x => x && (x.id && c.id ? x.id === c.id : mnorm(x.name) === mnorm(c.name))) === i);
+    const cs = cs0.filter((c, i) => c && c.name && cs0.findIndex(x => x && (x.id && c.id ? x.id === c.id : mnorm(x.name) === mnorm(c.name))) === i);
     const y1 = +(t.release_date || al.release_date || "").slice(0, 4) || null, y2 = Core.isrcYear(t.isrc);
     const y = y1 && y2 ? Math.min(y1, y2) : y1 || y2 || null;
     return { id: "dz:" + t.id, dz: t.id, t: t.title, a: cs.map(c => c.name).filter(Boolean).join("; "), aid: cs.map(c => c.id).filter(Boolean),
@@ -68,6 +68,7 @@ const Deezer = {
   },
   async search(q, limit = 20) { const d = await dz("/search?q=" + encodeURIComponent(q) + "&limit=" + limit); return ((d && d.data) || []).filter(t => t && t.readable !== false).map(t => this.parse(t)); },
   async artists(q, limit = 6) { const d = await dz("/search/artist?q=" + encodeURIComponent(q) + "&limit=" + limit); return ((d && d.data) || []).map(a => ({ id: a.id, name: a.name, pic: https(a.picture_medium), fans: a.nb_fan || 0 })); },
+  async artist(id) { const a = await dz("/artist/" + id); return a && a.id ? { id: a.id, name: a.name, pic: https(a.picture_medium), fans: a.nb_fan || 0 } : null; },
   async track(id) { const t = await dz("/track/" + id); return t && t.id ? this.parse(t) : null; },
   async byIsrc(isrc) { try { const t = await dz("/track/isrc:" + encodeURIComponent(isrc)); return t && t.id ? this.parse(t) : null; } catch { return null; } },
   async related(id, limit = 20) { const d = await dz(`/artist/${id}/related?limit=${limit}`); return ((d && d.data) || []).map(a => ({ id: a.id, name: a.name, fans: a.nb_fan || 0 })); },
@@ -97,18 +98,22 @@ const itLimit = limiter(3);
 const ITunes = {
   id: "itunes", label: "Apple Music",
   parse(r) {
-    return { id: "it:" + r.trackId, it: r.trackId, t: r.trackName, a: r.artistName, aid: [], al: r.collectionName || "", y: +(r.releaseDate || "").slice(0, 4) || null,
+    return { id: "it:" + r.trackId, it: r.trackId, t: r.trackName, a: r.artistName, aid: [], itA: r.artistId || null, al: r.collectionName || "", y: +(r.releaseDate || "").slice(0, 4) || null,
       isrc: null, exp: r.trackExplicitness === "explicit" ? "explicit" : r.trackExplicitness === "cleaned" ? "clean" : "", dur: Math.round((r.trackTimeMillis || 0) / 1000),
       rank: 0, cov: https((r.artworkUrl100 || "").replace("100x100bb", "300x300bb")), prev: https(r.previewUrl), link: https(r.trackViewUrl), full: true };
   },
   async search(q, limit = 20) { const d = await itLimit(() => getJSON(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=${limit}&country=${encodeURIComponent(SETTINGS.country || "us")}`)); return (d.results || []).filter(x => x.kind === "song").map(x => this.parse(x)); },
-  async find(title, artist) { const r = await this.search(`${title} ${Core.firstArtist(artist)}`, 10); return r.find(x => match(title, artist, x)) || null; }
+  async find(title, artist) { const r = await this.search(`${title} ${Core.firstArtist(artist)}`, 10); return r.find(x => match(title, artist, x)) || null; },
+  async artists(q, limit = 10) { const d = await itLimit(() => getJSON(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=musicArtist&limit=${limit}&country=${encodeURIComponent(SETTINGS.country || "us")}`)); return (d.results || []).filter(x => x.artistId && x.artistName).map(x => ({ id: x.artistId, name: x.artistName, genre: x.primaryGenreName || "" })); },
+  async songsOf(id, limit = 3) { const d = await itLimit(() => getJSON(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&entity=song&limit=${limit}&country=${encodeURIComponent(SETTINGS.country || "us")}`)); return (d.results || []).filter(x => x.kind === "song").map(x => this.parse(x)); }
 };
 
 /* ---------- MusicBrainz / Cover Art Archive / ListenBrainz ---------- */
 const mbLimit = limiter(1);
 const MB = { headers: BROWSER ? { Accept: "application/json" } : { Accept: "application/json", "User-Agent": "MIXER/3 (github.com/nymph-exe/Prendete-Mix)" } }; /* browsers send their own User-Agent */
 const MusicBrainz = {
+  /* MusicBrainz answers 503 when it's busy: wait and try again twice; 404 means "doesn't know it" */
+  async get(path) { for (let i = 0; ; i++) { try { return await mbLimit(() => getJSON("https://musicbrainz.org/ws/2/" + path + (path.includes("?") ? "&" : "?") + "fmt=json", MB)); } catch (e) { if (e.status === 404) return null; if (e.status !== 503 || i >= 2) throw e; await sleep(1500 * (i + 1)); } } },
   async artistMbid(name) {
     try { const d = await mbLimit(() => getJSON(`https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent('artist:"' + name.replace(/"/g, "") + '"')}&fmt=json&limit=3`, MB));
       const a = (d.artists || []).find(x => mnorm(x.name) === mnorm(name) && (x.score || 0) >= 90); return a ? a.id : null; } catch { return null; }
@@ -122,7 +127,7 @@ const MusicBrainz = {
   async search(q, limit = 10) {
     const d = await mbLimit(() => getJSON(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(q)}&fmt=json&limit=${limit}`, MB));
     return (d.recordings || []).map(r => { const rel = (r.releases || [])[0] || {}; const rg = (rel["release-group"] || {}).id;
-      return { id: "mb:" + r.id, t: r.title, a: (r["artist-credit"] || []).map(c => c && c.name).filter(Boolean).join("; "), aid: [], al: rel.title || "", y: +String(r["first-release-date"] || "").slice(0, 4) || null,
+      return { id: "mb:" + r.id, t: r.title, a: (r["artist-credit"] || []).map(c => c && c.name).filter(Boolean).join("; "), aid: [], mbA: (r["artist-credit"] || []).filter(c => c && c.name).map(c => (c.artist && c.artist.id) || ""), al: rel.title || "", y: +String(r["first-release-date"] || "").slice(0, 4) || null,
         isrc: (r.isrcs || [])[0] || null, exp: "", dur: Math.round((r.length || 0) / 1000), rank: 0, cov: rg ? `https://coverartarchive.org/release-group/${rg}/front-250` : null, prev: null, link: `https://musicbrainz.org/recording/${r.id}` }; });
   }
 };
@@ -219,7 +224,9 @@ const Discogs = {
 };
 /* ---------- Wikidata: genres of artists, by MusicBrainz artist ID (one query for many artists) ---------- */
 const wdLimit = paced(pacer(1));
+const WDH = { headers: BROWSER ? { Accept: "application/sparql-results+json" } : { Accept: "application/sparql-results+json", "User-Agent": "MIXER/3 (github.com/nymph-exe/Prendete-Mix)" } };
 const Wikidata = {
+  async query(q) { const d = await wdLimit(() => getJSON("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q), WDH, 20000)); return (d.results && d.results.bindings) || []; },
   async genres(mbids) {
     const out = new Map(); const list = [...new Set(mbids.filter(x => /^[0-9a-f-]{36}$/.test(x || "")))];
     for (let i = 0; i < list.length; i += 60) {

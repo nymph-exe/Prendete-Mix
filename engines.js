@@ -7,6 +7,7 @@
 "use strict";
 const Core = G.Core || require("./core.js");
 const Cat = G.Catalog || require("./catalog.js");
+const Arts = G.Artists || require("./artists.js");
 const { Deezer, ReccoBeats, ListenBrainz, MusicBrainz } = Cat;
 
 const NEUTRAL = new Set(["Prefer another song", "Redundant selection"]);
@@ -34,13 +35,14 @@ const reasonsOf = r => { const out = r.reason ? [r.reason] : []; if (r.text) for
 /* ---------- shared eligibility (hard requirements) ---------- */
 function rules(pl, never) {
   const dir = pl.direction || {}, form = dir.form || {}, ex = dir.exclude || {};
-  const block = new Set([...(never || []), ...(ex.artists || [])].map(nn).filter(Boolean));
+  const block = Arts.banSet([...(never || []), ...(ex.artists || [])]);
   return { dir, form, block, exSongs: (ex.songs || []).filter(Boolean), versions: !!form.versions, era: form.era && form.era[0] ? form.era : null, explicit: form.explicit || "any",
     avoidHits: !!form.avoidHits || !!form.gems, gems: !!form.gems, preferHits: !!form.preferHits, langs: form.langs || [], notLangs: form.notLangs || [],
     holiday: HOLIDAY.test([dir.text, ...(form.keywords || []), ...(form.moods || [])].join(" ")), crowd: !!form.crowd,
     novelty: /\b(parody|parodies|meme|memes|novelty|joke songs?|funny songs?|kids|children|niños|infantil)\b/i.test(dir.text || "") };
 }
-function blocked(t, R) { return String(t.a || "").split(/;\s*/).some(a => R.block.has(nn(a))) || [...R.block].some(b => b && nn(t.t).includes("feat" + b)); }
+/* "Never suggest": IDs decide; exact full names only where there's no ID to compare (see artists.js) */
+function blocked(t, R) { return Arts.banned(t, R.block); }
 /* language: decided from the lyrics when LRCLIB has them; instrumentals pass; unknown songs are kept but ranked lower */
 function langVerdict(t, R) {
   if (!R.langs.length && !R.notLangs.length) return "ok";
@@ -139,7 +141,7 @@ async function buildProfile(ctx, say) {
       for (const p of pls) { const tr = await Deezer.playlistTracks(p.id, 100); tr.forEach(t => { (t.aid || []).slice(0, 1).forEach(id => add(id, names(t)[0], .25, "list")); pool.push(Object.assign(t, { _why: `From Deezer's “${p.title}” playlist` })); }); }
     } catch { fails++; }
   }
-  for (const c of [...W.values()]) if (avoid.has(Core.norm(c.name)) || blocked({ a: c.name || "", t: "" }, R)) W.delete(c.id);
+  for (const c of [...W.values()]) if (avoid.has(Core.norm(c.name)) || blocked({ a: c.name || "", aid: [c.id], t: "" }, R)) W.delete(c.id);
   const seenPool = new Set(); for (let i = pool.length - 1; i >= 0; i--) { const t = pool[i]; if (seenPool.has(t.id) || avoid.has(primary(t)) || blocked(t, R)) pool.splice(i, 1); else seenPool.add(t.id); }
   // audio-feature profile from manual approvals and references (delegated picks excluded: QUAL-012)
   say && say("Measuring energy, tempo and mood…");
@@ -415,7 +417,7 @@ const Classic = {
     const cand = new Map();
     /* "hidden gems": artists with huge followings count for less (Deezer fans) */
     const gem = fans => (!fans || !P.R.avoidHits ? 1 : P.R.gems ? (fans > 400000 ? 0 : 1 / (1 + fans / 60000)) : 1 / (1 + fans / 1500000) ** .6);
-    const addC = (id, name, score, from, via, sfrom, song, fans) => { if (!id || !name || P.avoid.has(Core.norm(name)) || blocked({ a: name, t: "" }, P.R)) return;
+    const addC = (id, name, score, from, via, sfrom, song, fans) => { if (!id || !name || P.avoid.has(Core.norm(name)) || blocked({ a: name, aid: [id], t: "" }, P.R)) return;
       noteName(id, name); if (gem(fans) === 0) return; const c = cand.get(id) || { id, name, score: 0, from: new Set(), via, seedFit: 0, fans }; c.score += score * gem(fans) * (P.doubt.has(Core.norm(name)) ? .4 : 1); if (from) c.from.add(from); if (sfrom != null) c.seedFit = Math.max(c.seedFit, sfrom); if (song && !c.song) c.song = song; cand.set(id, c); };
     const firstName = s => String(s || "").split(/\s+(?:&|feat\.?|ft\.?|x|×|with)\s+|,\s*/i)[0].trim();
     say("Exploring artists near your picks…");
@@ -707,7 +709,8 @@ function directionBlock(pl, never, get) {
   L.push("Requirements: " + tr.join("; "));
   const refs = (d.refs || []).map(get).filter(Boolean); if (refs.length) L.push("Reference songs (examples of the sound, not instructions to include):\n" + refs.map(line).join("\n"));
   if ((d.artists || []).length) L.push("Reference artists: " + d.artists.map(a => a.name).join(", "));
-  const blocks = [...(ex.artists || []), ...(never || [])]; if (blocks.length) L.push("Never suggest songs by or featuring: " + [...new Set(blocks)].join(", "));
+  const blocks = []; for (const e of [...(ex.artists || []), ...(never || [])]) Arts.add(blocks, e);
+  if (blocks.length) L.push("Never suggest songs by or featuring these artists (other artists who only share a name are fine): " + blocks.map(e => { const a = Arts.describe(e); return Arts.nameOf(e) + (a ? ` (${a})` : ""); }).join(", "));
   const exs = (ex.songs || []).map(get).filter(Boolean); if (exs.length) L.push("Excluded songs:\n" + exs.map(line).join("\n"));
   return L.join("\n\n");
 }
@@ -730,7 +733,6 @@ async function verifyAll(items, R, ctx, say, label) {
     if (ctx.stopped && ctx.stopped()) break;
     say(`${label} ${++i}/${items.length}…`);
     const title = String(it.title || "").trim(), artist = String(it.artist || "").trim(); if (!title || !artist) continue;
-    if (blocked({ t: title, a: artist }, R)) { skipped.push(`${title} — ${artist}`); continue; }
     let t; try { t = await Cat.resolve(title, artist); } catch { throw new Core.OpError("OFFLINE", "Couldn't reach Deezer or Apple Music to check the suggestions. Check your connection and try again; nothing was added."); }
     if (!t) { missing.push(`${title} — ${artist}`); continue; }
     await langsFor([t], ctx.saveTracks, !!(R.langs.length || R.notLangs.length));
@@ -809,13 +811,15 @@ async function applyReading(j, st, o = {}) {
   const capd = n => /^[A-Z0-9$¡¿]/.test(n) || /[A-Z]/.test(n.slice(1));
   const OFF = {}; const artist = async (n, minFans) => { try { say(`Looking up ${n}…`); return await Deezer.artistByName(n, minFans); } catch { return OFF; } };
   for (const n of (j.referenceArtists || []).filter(Boolean).slice(0, 15)) { const a = await artist(n, strict ? (capd(n) ? 1000 : 10000) : 0); if (a === OFF) unchecked.push(n); else if (a) { if (!d.artists.some(x => x.id === a.id)) d.artists.push({ id: a.id, name: a.name }); } else missing.push(n); }
+  /* an artist to leave out is saved by ID once it's found; a name that can't be checked right now stays a plain
+     name (exact full-name match only) and the editor offers to pick the artist later */
+  const ban = a => Arts.add(d.exclude.artists, { name: a.name, dz: [a.id] });
   for (const n of (j.excludeArtists || []).filter(Boolean).slice(0, 40)) {
-    if (!strict) { if (!d.exclude.artists.some(x => Core.norm(x) === Core.norm(n))) d.exclude.artists.push(n); continue; }
-    const a = await artist(n, capd(n) ? 500 : 5000);
-    if (a === OFF) { if (capd(n) && !d.exclude.artists.some(x => Core.norm(x) === Core.norm(n))) d.exclude.artists.push(n); else unchecked.push(n); }
-    else if (a) { if (!d.exclude.artists.some(x => Core.norm(x) === Core.norm(a.name))) d.exclude.artists.push(a.name); } else missing.push(n); }
+    const a = await artist(n, strict ? (capd(n) ? 500 : 5000) : 0);
+    if (a === OFF) { if (!strict || capd(n)) Arts.add(d.exclude.artists, n); else unchecked.push(n); }
+    else if (a) ban(a); else if (!strict) Arts.add(d.exclude.artists, n); else missing.push(n); }
   for (const c of (j.maybeArtists || []).slice(0, 10)) { const a = await artist(c.name, 30000); if (!a || a === OFF) continue;
-    if (c.role === "ex") { if (!d.exclude.artists.some(x => Core.norm(x) === Core.norm(a.name))) d.exclude.artists.push(a.name); } else if (!d.artists.some(x => x.id === a.id)) d.artists.push({ id: a.id, name: a.name }); }
+    if (c.role === "ex") ban(a); else if (!d.artists.some(x => x.id === a.id)) d.artists.push({ id: a.id, name: a.name }); }
   const tr = j.traits || {}, f = d.form; const gl = o.genres || [];
   for (const n of (tr.genres || []).filter(Boolean)) { const g = gl.find(x => Core.norm(x.name) === Core.norm(n)); const item = g ? { id: g.id, name: g.name } : { id: null, name: n };
     const have = (f.genres || []).find(x => Core.norm(x.name) === Core.norm(item.name)); if (!have) f.genres = [...(f.genres || []), item]; else if (!have.id && item.id) have.id = item.id; }

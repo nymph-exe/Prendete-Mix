@@ -155,6 +155,66 @@ function namesEditor(list, label, placeholder, onchange) {
   };
   draw(); return box;
 }
+/* "Never suggest" editor. A ban is a real artist picked from Deezer, MusicBrainz and Apple Music, so
+   other artists who share the name stay allowed. Typing alone adds nothing. */
+const andList = a => (a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1]);
+function banEditor(list, o = {}) {
+  const box = h("div", { class: "field bans" }); let res = null, more = false, msg = "", busy = false, replacing = null;
+  const save = () => { if (o.onchange) o.onchange(); };
+  const inp = h("input", { type: "search", placeholder: "Artist name", "aria-label": (o.label || "Never suggest") + ": artist name", maxlength: "80", enterkeyhint: "search" });
+  const st = h("p", { class: "small", role: "status", "aria-live": "polite" });
+  const ava = (pic, name, key) => h("div", { class: "ava" }, pic ? h("img", { src: pic, alt: "", referrerpolicy: "no-referrer" }) : placeholder({ id: key, t: name }));
+  const go = async () => {
+    const q = inp.value.trim(); if (!q || busy) return; busy = true; res = null; more = false; msg = ""; draw(); st.textContent = "Looking on Deezer, MusicBrainz and Apple Music…";
+    try { res = await Artists.find(q, { say: t => { st.textContent = t; } }); } catch { res = { groups: [], failed: ["Deezer", "MusicBrainz", "Apple Music"] }; }
+    res.q = q; busy = false; draw(); const first = box.querySelector(".res.found button"); if (first) first.focus({ preventScroll: true });
+  };
+  const pick = g => {
+    const e = Artists.toEntry(g);
+    if (replacing) { const j = list.indexOf(replacing); if (j >= 0) list.splice(j, 1); replacing = null; }
+    const others = res.groups.filter(x => x.exact && x !== g).length;
+    if (!Artists.add(list, e)) msg = `${g.name} is already on this list.`;
+    else msg = `${g.name} won't be suggested.` + (others ? ` ${others === 1 ? "1 other artist" : others + " other artists"} with the same name can still be suggested.` : "");
+    res = null; inp.value = ""; save(); draw();
+  };
+  const draw = () => {
+    box.replaceChildren(h("span", { class: "lbl", text: o.label || "Never suggest" }));
+    list.forEach((e0, i) => { const e = Artists.entry(e0); if (!e) return; const src = Artists.sourcesOf(e);
+      const sub = e.plain ? `Not matched to an artist yet, so only songs credited to exactly “${e.name}” are skipped.` : [e.about, src.length ? (src.length > 1 ? "Same artist on " : "On ") + andList(src) : ""].filter(Boolean).join(". ");
+      box.append(h("div", { class: "res ban" + (e.plain ? " loose" : "") }, ava(e.pic, e.name, "b" + i + e.name), h("div", {}, h("div", { class: "t", text: e.name }), h("div", { class: "m", text: sub }),
+        h("div", { class: "pick" }, e.plain ? btn("Choose the artist", "", () => { replacing = e0; inp.value = e.name; go(); }) : null,
+          btn("Remove", "ghost", () => { const j = list.indexOf(e0); if (j >= 0) list.splice(j, 1); if (replacing === e0) replacing = null; msg = `${e.name} can be suggested again.`; save(); draw(); })))));
+    });
+    if (!list.length) box.append(h("p", { class: "small", text: o.empty || "No artists yet." }));
+    inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go(); } };
+    box.append(h("div", { class: "inl" }, inp, btn(busy ? "Looking…" : "Find", "ghost sm", go, busy ? { disabled: true } : undefined)));
+    st.textContent = busy ? st.textContent : msg; box.append(st);
+    if (!res) return;
+    const ex = res.groups.filter(g => g.exact), q = res.q, failed = res.failed || [];
+    let head;
+    if (failed.length >= 3) head = "Couldn't reach Deezer, MusicBrainz or Apple Music. Check your connection and try again. Nothing was added.";
+    else if (!res.groups.length) head = `No artist called “${q}” on Deezer, MusicBrainz or Apple Music. Nothing was added.`;
+    else if (!ex.length) head = `No artist is called exactly “${q}”. These are the closest names. Nothing is added until you pick one.`;
+    else if (ex.length === 1) head = "Pick the artist you mean. Nothing is added until you do.";
+    else head = `${ex.length} different artists are called “${q}”. Pick the one you mean; the others stay allowed.`;
+    if (failed.length && failed.length < 3) head += ` ${andList(failed)} didn't answer, so some artists may be missing.`;
+    box.append(h("p", { class: "small hint", text: head }));
+    const shown = more ? res.groups : res.groups.slice(0, 5);
+    shown.forEach((g, i) => { const on = list.some(x => Artists.isLinked(x) && Artists.same(x, g));
+      const meta = [g.about, g.fans ? `${Artists.fmtFans(g.fans)} fans on Deezer` : "", g.genre].filter(Boolean).join(" · ");
+      const src = g.sources.length ? (g.sources.length > 1 ? "Same artist on " : "Only on ") + andList(g.sources) + (g.dupes ? ` (includes ${g.dupes === 1 ? "a second Deezer profile" : g.dupes + " more Deezer profiles"})` : "") : "";
+      box.append(h("div", { class: "res found" }, ava(g.pic, g.name, "g" + i + g.name), h("div", {}, h("div", { class: "t", text: g.name }), meta ? h("div", { class: "m", text: meta }) : null, h("div", { class: "m", text: src }),
+        h("div", { class: "pick" }, btn(on ? "✓ On the list" : "Never suggest", on ? "" : "ghost", on ? () => {} : () => pick(g))))));
+    });
+    box.append(h("div", { class: "btns" }, !more && res.groups.length > 5 ? btn(`Show ${res.groups.length - 5} more`, "ghost sm", () => { more = true; draw(); }) : null, btn("Cancel", "ghost sm", () => { res = null; replacing = null; inp.value = ""; draw(); })));
+  };
+  /* bans saved from one service (a description, a Deezer result): add their other IDs in the background, once per visit */
+  for (const e0 of list.slice()) { const e = Artists.entry(e0); const k = e && e.dz.join(",");
+    if (!e || e.plain || e.mb || banEditor.tried.has(k)) continue; banEditor.tried.add(k);
+    Artists.complete(e0).then(full => { const j = list.indexOf(e0); if (j < 0 || !full || typeof full !== "object" || !full.mb) return; list[j] = full; save(); draw(); }).catch(() => {}); }
+  box.redraw = draw; draw(); return box;
+}
+banEditor.tried = new Set();
 /* Read a description with the playlist's engine (Classic reader or AI) and merge it into the editor state. */
 async function readInto(st, engine, say) {
   const text = (st.dir.text || "").trim(); if (!text) throw new Core.OpError("EMPTY", "Write a description first.");
@@ -194,15 +254,19 @@ function dirEditor(st, mode, o = {}) {
       sec("Never include", d.exclude.songs, t => [ibtn("x", "Remove " + t.t, () => { drop(t.id); drawPicks(); })], null);
       if (o.onchange) o.onchange();
     };
-    let exBox = namesEditor(d.exclude.artists, "Never suggest these artists here", "Artist name");
+    const exBox = banEditor(d.exclude.artists, { label: "Never suggest these artists here", empty: "None. Artists in Settings → Never suggest are left out of every playlist." });
     const drawRes = () => {
       res.replaceChildren(); const r = st._res; if (!r) return;
       if (r.msg) res.append(h("p", { class: "small", text: r.msg }));
-      (r.artists || []).forEach(a => { const on = d.artists.some(x => x.id === a.id); const ex = d.exclude.artists.some(x => Core.norm(x) === Core.norm(a.name));
+      (r.artists || []).forEach(a => { const on = d.artists.some(x => x.id === a.id); const exE = { name: a.name, dz: [a.id], pic: a.pic }; const ex = d.exclude.artists.some(x => Artists.isLinked(x) && Artists.same(x, exE));
         res.append(h("div", { class: "res" }, h("div", { class: "ava" }, a.pic ? h("img", { src: a.pic, alt: "", referrerpolicy: "no-referrer" }) : placeholder({ id: "a" + a.id, t: a.name })),
           h("div", {}, h("div", { class: "t", text: a.name }), h("div", { class: "m", text: "Artist" }), h("div", { class: "pick" },
             btn(on ? "✓ Sounds like" : "Sounds like", on ? "" : "ghost", () => { if (on) d.artists = d.artists.filter(x => x.id !== a.id); else d.artists.push({ id: a.id, name: a.name }); drawPicks(); drawRes(); }),
-            btn(ex ? "✓ Never suggest" : "Never suggest", ex ? "" : "ghost", () => { if (ex) d.exclude.artists = d.exclude.artists.filter(x => Core.norm(x) !== Core.norm(a.name)); else d.exclude.artists.push(a.name); const nb = namesEditor(d.exclude.artists, "Never suggest these artists here", "Artist name"); exBox.replaceWith(nb); exBox = nb; drawRes(); }))))); });
+            btn(ex ? "✓ Never suggest" : "Never suggest", ex ? "" : "ghost", () => { const L = d.exclude.artists;
+              if (ex) { const j = L.findIndex(x => Artists.same(x, exE)); if (j >= 0) L.splice(j, 1); }
+              else { Artists.add(L, exE); /* add this artist's Apple Music and MusicBrainz IDs, and duplicate Deezer profiles, in the background */
+                Artists.complete(exE).then(full => { const j = L.findIndex(x => Artists.same(x, exE)); if (j >= 0 && full && typeof full === "object") { L[j] = full; exBox.redraw(); } }).catch(() => {}); }
+              exBox.redraw(); drawRes(); }))))); });
       Q["search"] = (r.tracks || []).map(t => t.id);
       (r.tracks || []).forEach(t => { const cur = d.refs.includes(t.id) ? "ref" : st.must.includes(t.id) || (st.mustLocked || []).includes(t.id) ? "must" : d.exclude.songs.includes(t.id) ? "ex" : "";
         const set = k => async () => { drop(t.id); if (k !== cur) { if (k !== "ex") { const full = await Catalog.complete(t); S.tmp.set(full.id, full); } (k === "ref" ? d.refs : k === "must" ? st.must : d.exclude.songs).push(t.id); } drawPicks(); drawRes(); };
