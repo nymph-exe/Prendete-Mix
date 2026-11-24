@@ -5,6 +5,15 @@
 "use strict";
 const Core = G.Core || (typeof require !== "undefined" ? require("./core.js") : null);
 const BROWSER = typeof document !== "undefined";
+/* lookups worth remembering between visits (song languages, first-release years, ListenBrainz song IDs): kept in this
+   browser's storage, newest first, so a second run on the same kind of music skips most of the waiting */
+function memo(key, max = 6000) {
+  const ls = BROWSER && G.localStorage; let m = null, tm = null;
+  const load = () => { if (m) return m; m = new Map(); try { const j = ls && JSON.parse(ls.getItem(key) || "null"); if (Array.isArray(j)) for (const [k, v] of j) m.set(k, v); } catch {} return m; };
+  const save = () => { if (!ls || tm) return; tm = setTimeout(() => { tm = null; try { ls.setItem(key, JSON.stringify([...m].slice(-max))); } catch {} }, 2500); };
+  return { get: k => load().get(k), set: (k, v) => { load().delete(k); load().set(k, v); save(); } };
+}
+const LANGS = memo("mixer-langs"), YEARS = memo("mixer-years"), MBIDS = memo("mixer-mbids");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const https = u => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
 function pacer(perSec) { let next = 0; const gap = 1000 / perSec; return async fn => { const now = Date.now(); const at = Math.max(now, next); next = at + gap; if (at > now) await sleep(at - now); return fn(); }; }
@@ -119,10 +128,14 @@ const MusicBrainz = {
       const a = (d.artists || []).find(x => mnorm(x.name) === mnorm(name) && (x.score || 0) >= 90); return a ? a.id : null; } catch { return null; }
   },
   async firstYear(t, a) {
+    const k = Core.norm(String(t).split(/\s[\(\[]/)[0]) + "|" + Core.norm(Core.firstArtist(a)); const c = YEARS.get(k); if (c !== undefined) return c;
+    const y = await this.firstYear0(t, a); if (y !== undefined) YEARS.set(k, y); return y;
+  },
+  async firstYear0(t, a) {
     try { const q = `recording:"${String(t).split(/\s[\(\[]/)[0].replace(/"/g, "")}" AND artist:"${Core.firstArtist(a).replace(/"/g, "")}"`;
       const d = await mbLimit(() => getJSON(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(q)}&fmt=json&limit=8`, MB));
       const ys = (d.recordings || []).filter(x => match(t, a, { t: x.title, a: (x["artist-credit"] || []).map(c => c.name).join("; ") })).map(x => +String(x["first-release-date"] || "").slice(0, 4)).filter(Boolean);
-      return ys.length ? Math.min(...ys) : null; } catch { return null; }
+      return ys.length ? Math.min(...ys) : null; } catch { return undefined; /* couldn't check: not remembered */ }
   },
   async search(q, limit = 10) {
     const d = await mbLimit(() => getJSON(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(q)}&fmt=json&limit=${limit}`, MB));
@@ -152,6 +165,7 @@ const LB = {
   key: t => Core.norm(Core.baseTitle(t.t) || t.t) + "|" + Core.norm(Core.firstArtist(t.a)),
   /* tracks → Map(track.id → {rec, artists}) ; tries the first artist, then the full credit */
   async lookup(tracks) {
+    for (const t of tracks) if (t && !t.mbid && t.id) { const c = MBIDS.get(t.id); if (c) { t.mbid = c[0]; t.ambids = c[1] || []; } }
     const out = new Map(); const todo = tracks.filter(t => t && t.t && t.a && !t.mbid);
     for (const t of tracks) if (t && t.mbid) out.set(t.id, { rec: t.mbid, artists: t.ambids || [] });
     const title = t => String(t.t).replace(/\s*[\(\[](feat|ft|with)\.?\s[^\)\]]*[\)\]]/ig, "").trim();
@@ -160,7 +174,7 @@ const LB = {
       for (let i = 0; i < left.length; i += 40) {
         const chunk = left.slice(i, i + 40);
         let res = []; try { res = await lbxLimit(() => postJSON(`${LBX}/acr-lookup/json`, chunk.map(t => ({ artist_credit_name: pass(t), recording_name: title(t) })))); } catch { continue; }
-        for (const r of res || []) { const t = chunk[r.index]; if (t && r.recording_mbid) { out.set(t.id, { rec: r.recording_mbid, artists: r.artist_mbids || [] }); t.mbid = r.recording_mbid; t.ambids = r.artist_mbids || []; } }
+        for (const r of res || []) { const t = chunk[r.index]; if (t && r.recording_mbid) { out.set(t.id, { rec: r.recording_mbid, artists: r.artist_mbids || [] }); t.mbid = r.recording_mbid; t.ambids = r.artist_mbids || []; if (t.id) MBIDS.set(t.id, [t.mbid, t.ambids]); } }
       }
       if (pass === undefined) break;
     }
@@ -192,7 +206,7 @@ const LB = {
     const out = new Map(); const list = [...new Set(recs.filter(Boolean))];
     for (let i = 0; i < list.length; i += 25) {
       try { const d = await lbaLimit(() => getJSON(`https://api.listenbrainz.org/1/metadata/recording/?recording_mbids=${list.slice(i, i + 25).join(",")}&inc=artist%20release`, {}, 25000));
-        for (const [k, v] of Object.entries(d || {})) out.set(k, { rec: k, t: v.recording && v.recording.name, a: (v.artist && v.artist.name) || "", y: (v.release && v.release.year) || null }); } catch {}
+        for (const [k, v] of Object.entries(d || {})) out.set(k, { rec: k, t: v.recording && v.recording.name, a: (v.artist && v.artist.name) || "", y: (v.release && v.release.year) || null, first: +String((v.recording && v.recording.first_release_date) || "").slice(0, 4) || null }); } catch {}
     }
     return out;
   },
@@ -269,7 +283,7 @@ async function complete(t) { if (t.dz && !t.full) { try { const f = await Deezer
 
 /* ---------- LRCLIB lyrics → language ---------- */
 /* LRCLIB is a free community service: keep a gentle pace, and when it says "slow down" (429) every lyrics request pauses */
-const lrLimit = limiter(2.5), lrsLimit = limiter(1); let lrPause = 0;
+const lrLimit = limiter(4), lrsLimit = limiter(2); let lrPause = 0;
 async function lrGet(url, lim) {
   for (let i = 0; ; i++) {
     const w = lrPause - Date.now(); if (w > 0) await sleep(w);
@@ -316,7 +330,11 @@ function detectLang(text) {
   return { main: ranked[0][0], langs: ranked.filter(([, x]) => x >= 0.2).slice(0, 3).map(([l]) => l), conf: ranked[0][1] };
 }
 async function languageOf(t, deep = true) {
+  if (!t.lang && t.id) { const c = LANGS.get(t.id); if (c) t.lang = c; }
   if (t.lang && (t.lang.src !== "unknown" || !deep || t.lang.deep)) return t.lang;
+  const r = await languageOf0(t, deep); if (r && t.id) LANGS.set(t.id, r); return r;
+}
+async function languageOf0(t, deep) {
   const ly = await LRCLIB.lyrics(t, deep);
   if (ly === undefined) return null;
   if (ly && ly.instrumental) return (t.lang = { main: null, langs: [], src: "instrumental" });
@@ -332,8 +350,13 @@ const LW = {
   pt: "voce nao eu meu minha amor coracao beijo saudade danca vai com sem pra tudo nada agora sempre".split(" "),
   fr: "je tu le les des une pas moi toi mon ma amour coeur nuit danse".split(" ")
 };
-function guessLang(title) {
+/* letters and scripts that belong to one language (family): a Turkish "ı", a Polish "ł", Hangul */
+const LETTERS = [[/[\uac00-\ud7af]/, "ko"], [/[\u3040-\u30ff]/, "ja"], [/[\u4e00-\u9fff]/, "zh"], [/[\u0400-\u04ff]/, "ru"], [/[\u0600-\u06ff]/, "ar"], [/[\u0900-\u097f]/, "hi"],
+  [/[\u0370-\u03ff]/, "el"], [/[\u0590-\u05ff]/, "he"], [/[\u0e00-\u0e7f]/, "th"], [/[ıİşŞğĞ]/, "tr"], [/[łŁąęśźżńćĄĘŚŹŻŃĆ]/, "pl"], [/[ěřůĚŘŮ]/, "cs"], [/[ăĂșȘțȚ]/, "ro"], [/[ãõÃÕ]/, "pt"], [/ß/, "de"]];
+function guessLang(title, lettersOnly) {
   const raw = String(title || ""); if (/[ñ¿¡]/i.test(raw)) return "es";
+  for (const [re, l] of LETTERS) if (re.test(raw)) return l;
+  if (lettersOnly) return null;
   const toks = mnorm(raw).split(" ").filter(Boolean); if (!toks.length) return null;
   const sc = {}; for (const [l, ws] of Object.entries(LW)) sc[l] = toks.filter(w => ws.includes(w)).length;
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];

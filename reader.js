@@ -9,7 +9,7 @@ const NEG = /(?:^|\b)(anything but|everything but|all but|other than|apart from|
 const OK_AFTER = /^\s*(?:is|are|es|son|esta|estan|also|tambien|too)?\s*(?:fine|ok|okay|bien|vale|allowed|welcome|permitid[oa]s?|bienvenid[oa]s?)\b/;
 const GENRES = [
   [/\b(reggaeton|regueton|reguetton|perreo|dembow|urbano latino|musica urbana|latin urban)\b/, "Reggaeton"], [/\b(latin|latino|latina|latinos|musica latina|latin music)\b/, "Latin Music"],
-  [/\bsalsa\b/, "Salsa"], [/\bcumbias?\b/, "Cumbia"], [/\b(regional mexicano|corridos?|corridos tumbados|tumbados?|banda|mariachi|nortenos?|sierrenos?)\b/, "Traditional Mexicano"],
+  [/\bsalsa\b/, "Salsa"], [/\bcumbias?\b/, "Cumbia"], [/\b(regional mexicano|corridos?|corridos tumbados|tumbados?|banda(?! de\b)|mariachi|nortenos?|sierrenos?)\b/, "Traditional Mexicano"],
   [/\b(rap|hip[ -]?hop|trap|drill|grime|boom bap)\b/, "Rap/Hip Hop"], [/(?<![kjc]-?)\bpop\b/, "Pop"], [/\b(rock|punk|grunge|pop punk)\b/, "Rock"],
   [/\b(edm|dance music|dance-pop|house(?! (party|parties|music party|warming))|club music|eurodance)\b/, "Dance"], [/\b(electro|electronic|electronica|techno|trance|dubstep|drum and bass|dnb)\b/, "Electro"],
   [/\b(r&b|rnb|r ?n ?b|r and b)\b/, "R&B"], [/\b(soul|(?<!brazilian |baile |brasil |brazil )funk(?! carioca)|motown|disco)\b/, "Soul & Funk"], [/\b(alternative|alt|indie)\b/, "Alternative"],
@@ -89,12 +89,17 @@ function splitNames(chunk) {
 
 /* any genre from the bundled MusicBrainz list (2,200+), matched by n-grams; spacing, hyphens and plurals don't matter */
 let GKEY = null; const gk = s => deacc(s).replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
-const AMBIG = new Set(["house", "garage", "swing", "march", "beat", "bass", "noise", "chill", "dance", "christmas", "holiday", "comedy", "lounge", "space", "dark", "hardcore", "cabaret", "opera", "children's music"]);
-const CLEAR = new Set(["house", "garage", "swing", "christmas", "holiday", "comedy", "lounge", "hardcore", "cabaret", "opera"]);
+const AMBIG = new Set(["house", "garage", "swing", "march", "beat", "bass", "noise", "chill", "dance", "christmas", "holiday", "comedy", "lounge", "space", "dark", "hardcore", "cabaret", "opera", "children's music", "industrial", "folklore", "cuarteto", "axé", "glitch", "meditation", "spanish reggae"]);
+const CLEAR = new Set(["house", "garage", "swing", "christmas", "holiday", "comedy", "lounge", "hardcore", "cabaret", "opera", "industrial", "folklore", "cuarteto", "axé", "glitch", "meditation"]);
 const MUSICW = /^(songs?|music|tunes|tracks|hits|playlist|canciones|musica|cancion|temas|classics|carols)$/;
 function genreIndex() {
   if (GKEY) return GKEY; const L = (typeof globalThis !== "undefined" && globalThis.GENRES) || (typeof require !== "undefined" ? (() => { try { return require("./genres.js"); } catch { return []; } })() : []);
-  GKEY = new Map(); for (const g of L) { const k = gk(g); if (k.length >= 3 && !GKEY.has(k)) GKEY.set(k, g); } return GKEY;
+  GKEY = new Map(); for (const g of L) { const k = gk(g); if (k.length >= 3 && !GKEY.has(k)) GKEY.set(k, g); }
+  /* the scene map's tags are style words too ("deutschrap", "plena", "show tunes") */
+  const SCN = (typeof globalThis !== "undefined" && globalThis.Scenes) || (typeof require !== "undefined" ? (() => { try { return require("./scenes.js"); } catch { return null; } })() : null);
+  /* (phrases with "en español" are left to the Spanish rewrites above, which also keep the language) */
+  if (SCN) for (const sc of Object.values(SCN.SCENES)) for (const t of sc.tags) { const k = gk(t); if (k.length >= 3 && !GKEY.has(k) && !/ en espa(n|ñ)ol$/.test(t)) { const sing = gk(String(t).split(/\s+/).map(w => (w.length > 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w)).join(" ")); if (!GKEY.has(sing)) GKEY.set(k, t); } }
+  return GKEY;
 }
 function findGenres(low, cls) {
   const idx = genreIndex(); if (!idx.size) return [];
@@ -106,6 +111,7 @@ function findGenres(low, cls) {
     if (!g) g = idx.get(gk(words.map(w => (w.length > 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w)).join(" ")));
     /* an ambiguous word counts when it's clearly about music: "christmas songs", "house music", "lounge tracks" */
     if (!g) continue; if (n === 1 && AMBIG.has(g) && !(CLEAR.has(g) && toks[i + 1] && MUSICW.test(toks[i + 1].w))) continue;
+    if (n === 1 && gk(g) === "banda" && ((toks[i + 1] && /^(de|favorita|nueva|que|mas|más)$/.test(toks[i + 1].w)) || (toks[i - 1] && /^(una|mi|tu|su|esta|esa|otra|la|cualquier)$/.test(toks[i - 1].w)))) continue;
     const at = toks[i].i; const c = cls.find(c => at >= c.s && at < c.e) || { s: 0 }; let seg = low.slice(c.s, at); const cm = seg.lastIndexOf(","); if (cm >= 0) seg = seg.slice(cm + 1);
     for (let k = 0; k < n; k++) used.add(i + k); out.push({ g, neg: NEG.test(seg) });
   }
@@ -132,6 +138,9 @@ function read(text) {
   /* "bien perreo" describes the vibe when another style is named; Brazilian funk isn't soul & funk */
   if (tr.keywords.some(k => !/^perreo$/.test(deacc(k))) && tr.keywords.some(k => /^perreo$/.test(deacc(k)))) { tr.keywords = tr.keywords.filter(k => !/^perreo$/.test(deacc(k))); if (!/\breggaet?on\b/.test(low)) tr.genres = tr.genres.filter(g => g !== "Reggaeton"); if (!tr.moods.includes("Party")) tr.moods.push("Party"); }
   if (tr.keywords.some(k => /funk (brasileiro|carioca|brasileno)|baile funk|brazilian funk/.test(deacc(k)))) tr.genres = tr.genres.filter(g => g !== "Soul & Funk");
+  /* "mi banda favorita", "una banda de rock": a band, not banda music */
+  if (/\b(una|mi|tu|su|esta|esa|otra|cualquier) banda\b|\bbanda (de|favorita|nueva)\b/.test(deacc(low)) && !/\b(banda sinaloense|musica de banda|tecnobanda|regional mexicano|corridos?|nortenos?|mariachi|sierrenos?)\b/.test(deacc(low))) {
+    tr.keywords = tr.keywords.filter(k => deacc(k) !== "banda"); if (!tr.keywords.some(k => /corrid|norten|mariachi|sierren|mexican/.test(deacc(k)))) tr.genres = tr.genres.filter(g => g !== "Traditional Mexicano"); }
   /* "indie folk" already says "indie" and "folk"; keep the longer name */
   tr.keywords = tr.keywords.filter(k => !tr.keywords.some(o => o !== k && / /.test(o) && deacc(o).split(/[ -]+/).some(w => gk(w) === gk(k) || gk(w) === gk(k).replace(/s$/, ""))));
   // "to dance" style phrases mean danceable, not the Dance genre

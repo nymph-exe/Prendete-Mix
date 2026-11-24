@@ -1,5 +1,5 @@
 // Classic description reader: offline checks (names are only candidates; the app verifies them in the catalog).
-const R = require("../reader.js");
+const R = require(process.env.V3 ? process.env.V3 + "/reader.js" : "../reader.js");
 let pass = 0, fail = 0; const eq = (name, a, b) => { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log(ok ? "ok  " : "FAIL", name, ok ? "" : `→ got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`); };
 let r = R.read("reggaeton y trap latino para el gym, tipo Bad Bunny, Feid y Young Miko, sin Daddy Yankee, desde 2019, en español");
 eq("es genres", r.traits.genres, ["Reggaeton", "Latin Music", "Rap/Hip Hop"]); eq("es mood", r.traits.moods, ["Workout"]); eq("es era", r.traits.era, [2019, new Date().getFullYear()]);

@@ -39,4 +39,18 @@ ok("plain “indie” finds indie rock", sc(["indie"]).includes("indie_now"));
 ok("bossa nova has its own scene", sc(["bossa nova"])[0] === "bossa_nova", sc(["bossa nova"]));
 ok("lofi still finds lofi beats", JSON.stringify(sc(["lofi"])) === '["lofi_beats"]');
 ok("crowd-pleasers with no style: mainstream scenes", [...E.scenesFor(P1([], "wedding hits", true), { want: [], broad: [], notS: [], taste: [], strict: false }).keys()].includes("pop_2010s"));
+/* the larger map (24 Nov 2026): 176 scenes, a third tier, every scene tag a style */
+const SCN = require(D + "/scenes.js"); const Rd = require(D + "/reader.js");
+const rsc = (text, langs = []) => { const t = Rd.read(text).traits; return sc([...(t.keywords || []), ...(t.genres || [])], langs, text); };
+ok("the map has 170+ scenes", Object.keys(SCN.SCENES).length >= 170, Object.keys(SCN.SCENES).length);
+ok("every scene tag is a style a request can name", Object.values(SCN.SCENES).flatMap(x => x.tags).every(t => E.wantStyles({ keywords: [t] }).length));
+ok("new scenes are reachable from a description", rsc("plena panameña")[0] === "plena_panama" && rsc("deutschrap")[0] === "german_rap" && rsc("show tunes")[0] === "musicals" && rsc("midwest emo")[0] === "emo", [rsc("plena panameña"), rsc("deutschrap"), rsc("show tunes"), rsc("midwest emo")]);
+ok("plain “rock”, “metal”, “jazz” keep to the broad scenes", !rsc("rock").some(k => /prog|psych|post_rock|hard_rock_modern|soft_rock|jrock/.test(k)) && JSON.stringify(rsc("metal")) === '["metal"]' && JSON.stringify(rsc("jazz")) === '["jazz_classic"]', [rsc("rock"), rsc("metal"), rsc("jazz")]);
+ok("a named subgenre still finds its scene", rsc("death metal").includes("extreme_metal") && rsc("prog rock")[0] === "prog_rock" && rsc("gypsy jazz").includes("gypsy_jazz"));
+ok("regional pop and hip hop only when asked", !rsc("pop").some(k => /arabic|turkish|cpop|opm/.test(k)) && !rsc("hip hop").includes("khiphop") && rsc("k-hip hop").includes("khiphop"), [rsc("pop"), rsc("hip hop")]);
+ok("plain “rap” is hip hop, not female rap", rsc("rap").includes("hiphop_2000s") && !rsc("rap").includes("female_rap") && rsc("female rappers")[0] === "female_rap", rsc("rap"));
+ok("“una banda de rock” is a band, “banda sinaloense” is banda", !rsc("una banda de rock").includes("banda") && !rsc("mi banda favorita").includes("banda") && rsc("banda sinaloense")[0] === "banda", [rsc("una banda de rock"), rsc("mi banda favorita")]);
+ok("ordinary words don't pick scenes", !rsc("music for my son's graduation").length && !rsc("electro").includes("electroclash") && !rsc("música para estudiar ingeniería industrial").length, [rsc("music for my son's graduation"), rsc("electro")]);
+const W1 = (SCN.SCENES.reggaeton_new.wide || [])[0]; ok("third tier: weaker members that never pick scenes", W1 && E.kbOf(W1[0]).every(m => m.tier === "wide"), W1 && E.kbOf(W1[0]));
+const gl = globalThis.Catalog.guessLang; ok("a title or name in another language's letters is read as that language", gl("Sığamıyorum") === "tr" && gl("Işın Karaca", true) === "tr" && gl("사랑해") === "ko" && gl("Corazón") === "es" && gl("Lady Gaga", true) === null, [gl("Sığamıyorum"), gl("Işın Karaca", true), gl("Lady Gaga", true)]);
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;
