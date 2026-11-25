@@ -34,5 +34,4 @@ Each playlist has its own direction, capacity, recommendations, rejections and s
 | `tests/style.test.js` | `node tests/style.test.js` checks Classic's genre matching |
 | `tests/robust.test.js` | `node tests/robust.test.js` checks junk input, damaged backups and old data, untrusted AI answers, and random operation sequences |
 | `tests/ban.test.js` | `node tests/ban.test.js` checks "Never suggest" matching: IDs decide, namesakes and partial names stay allowed |
-| `tests/tiers.live.js` | `node tests/tiers.live.js run <tag> && node tests/tiers.live.js check <tag>` runs 46 live requests in three tiers (basic, normal, aggressive) and reports rule problems, how many picks fit the requested scenes, popularity and time |
 | `tests/listen.test.js` | `npm install meyda && node tests/listen.test.js` checks the preview analyzer |
