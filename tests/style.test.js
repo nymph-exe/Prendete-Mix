@@ -53,4 +53,17 @@ ok("“una banda de rock” is a band, “banda sinaloense” is banda", !rsc("u
 ok("ordinary words don't pick scenes", !rsc("music for my son's graduation").length && !rsc("electro").includes("electroclash") && !rsc("música para estudiar ingeniería industrial").length, [rsc("music for my son's graduation"), rsc("electro")]);
 const W1 = (SCN.SCENES.reggaeton_new.wide || [])[0]; ok("third tier: weaker members that never pick scenes", W1 && E.kbOf(W1[0]).every(m => m.tier === "wide"), W1 && E.kbOf(W1[0]));
 const gl = globalThis.Catalog.guessLang; ok("a title or name in another language's letters is read as that language", gl("Sığamıyorum") === "tr" && gl("Işın Karaca", true) === "tr" && gl("사랑해") === "ko" && gl("Corazón") === "es" && gl("Lady Gaga", true) === null, [gl("Sığamıyorum"), gl("Işın Karaca", true), gl("Lady Gaga", true)]);
+/* far-apart starting points are built in parts (25 Nov 2026) */
+const mkPl = (dir, seeds = []) => { const T = new Map(seeds.map(t => [t.id, t])); const pl = globalThis.Core.createPlaylist({ name: "t", method: "NATURAL_LANGUAGE", direction: Object.assign({ text: "", refs: [], artists: [], exclude: { artists: [], songs: [] }, form: {} }, dir), capacity: 60 });
+  if (seeds.length) { globalThis.Core.appendCandidates(pl, seeds, { batchId: "s" }, id => T.get(id)); globalThis.Core.approve(pl, seeds.map(t => t.id)); } return { latest: () => pl, getTrack: id => T.get(id) }; };
+const SID = n => require(D + "/scenes.ids.js")[n][0];
+const tk = (id, t, aid) => ({ id, t, a: "x", aid: [aid], dz: id });
+const three = E._partsOf(mkPl({}, [tk("dz:1", "ULTIMATE RAGE", SID("HUSSVRX")), tk("dz:2", "Pégale Papá", SID("Los Plebeyos")), tk("dz:3", "Grace", SID("42 Dugg"))]));
+ok("three songs from three worlds: three parts", three && three.length === 3, three && three.map(p => p.label));
+const one = E._partsOf(mkPl({}, [tk("dz:4", "a", SID("Bad Bunny")), tk("dz:5", "b", SID("Feid")), tk("dz:6", "c", SID("Young Miko"))]));
+ok("three reggaeton songs: one playlist, no parts", one === null, one && one.map(p => p.label));
+const st3 = E._partsOf(mkPl({ form: { keywords: ["aggressive phonk", "michigan street rap", "monterrey cumbia"], genres: [{ id: 71, name: "Cumbia" }, { id: 116, name: "Rap/Hip Hop" }] } }));
+ok("three far-apart styles: three parts (the reader's genres stay with their styles)", st3 && st3.length === 3, st3 && st3.map(p => p.label + ":" + p.genres.map(g => g.name)));
+const st1 = E._partsOf(mkPl({ form: { keywords: ["reggaeton", "trap latino"], genres: [{ id: 122, name: "Reggaeton" }] } }));
+ok("reggaeton and trap latino stay one playlist", st1 === null, st1 && st1.map(p => p.label));
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

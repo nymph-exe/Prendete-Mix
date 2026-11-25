@@ -117,6 +117,50 @@ function findGenres(low, cls) {
   }
   return out;
 }
+/* "ULTIMATE RAGE - HUSSVRX, 222.222t, WGSU - 8deuceee7, BigWan and Pégale Papá - Los Plebeyos, Celso Piña":
+   between two dashes, the last name is the next song's title and the ones before it are the previous song's artists */
+function dashSongs(raw) {
+  /* one song per line when the list is pasted line by line; otherwise read the dashes in one go */
+  const lines = []; let pos = 0; for (const line of raw.split("\n")) { lines.push([pos, line]); pos += line.length + 1; }
+  const full = lines.filter(([, l]) => l.trim()); const LINE = full.length >= 2 && full.some(([, l]) => /\s[-–—]\s/.test(l));
+  const songs = LINE ? full.flatMap(([o, l]) => inlineSongs(l, o)) : inlineSongs(raw, 0);
+  if (LINE) for (const [o, line] of full) { if (songs.some(x => x.s < o + line.length && x.e > o)) continue;
+    const q = line.trim().replace(/^(?:and|y|&|plus|also|tambi[eé]n)\s+/i, "").trim(); const words = q.split(/\s+/);
+    if (words.length > 10 || /\b(songs?|music|playlist|canciones|m[uú]sica|like|want|make|para|for|with|con|please|por favor)\b/i.test(q)) continue;
+    if (!(/,/.test(q) || words.some(w => /^[A-Z0-9$]{3,}$/.test(w) || (/\d/.test(w) && /[a-z]/i.test(w))))) continue;
+    const st = o + line.indexOf(q); songs.push({ title: q, artist: "", free: true, s: st, e: st + q.length }); }
+  return songs.sort((x, y) => x.s - y.s);
+}
+/* "ULTIMATE RAGE - HUSSVRX, 222.222t, WGSU - 8deuceee7, BigWan and Pégale Papá - Los Plebeyos, Celso Piña":
+   between two dashes, the last name is the next song's title and the ones before it are the previous song's artists */
+function inlineSongs(raw, base) {
+  const cuts = []; const re = /\s+[-–—]\s+/g; let m; while ((m = re.exec(raw))) cuts.push([m.index, m.index + m[0].length]);
+  if (!cuts.length || cuts.length > 25) return [];
+  const segs = []; let st = 0; for (const [a, b] of cuts) { segs.push([st, a]); st = b; } segs.push([st, raw.length]);
+  const CONJ = /^(?:and|y|e|&|plus|also|tambi[eé]n)\s+/i;
+  const items = ([a, b]) => { const out = []; const r2 = /,\s*|;\s*|\s*[•·]\s*|\s+(?:and|y|e|plus|feat\.?|ft\.?)\s+/gi; let x, s0 = a; const seg = raw.slice(a, b);
+    while ((x = r2.exec(seg))) { out.push([s0, a + x.index]); s0 = a + x.index + x[0].length; } out.push([s0, b]);
+    return out.map(([u, v]) => { const c = CONJ.exec(raw.slice(u, v)); return c ? [u + c[0].length, v] : [u, v]; }).filter(([u, v]) => raw.slice(u, v).trim()); };
+  const txt = ([u, v]) => raw.slice(u, v).trim();
+  const okName = n => n && n.length <= 60 && n.split(/\s+/).length <= 8 && !/^\d{2,4}s?$/.test(n) && !/\b(songs?|music|playlist|canciones|m(u|ú)sica|tracks|vibes)\b/i.test(n);
+  const marked = n => /[A-ZÁÉÍÓÚÑ0-9$!.#&]/.test(n);
+  const songs = [];
+  for (let i = 0; i < segs.length - 1; i++) {
+    const left = items(segs[i]); let tt = left[left.length - 1]; if (!tt) continue;
+    /* a lead-in before the first title: "blend these: ", "songs like " */
+    let t0 = txt(tt); const lead = /^.*?(?:\b(?:like|such as|tipo|como|between|entre|blend(?:ing|s)?(?: of)?|mix(?:ing)?(?: of)?|these|estas|estos)\b|:)\s*/i.exec(t0);
+    if (lead && i === 0 && lead[0].length < t0.length) { tt = [tt[0] + raw.slice(tt[0]).indexOf(t0) + lead[0].length, tt[1]]; t0 = txt(tt); }
+    const right = items(segs[i + 1]); const arts = i + 1 === segs.length - 1 ? right : right.slice(0, -1); if (!arts.length) continue;
+    let artists = arts.map(txt); const lastA = artists[artists.length - 1];
+    const tail = / (?:for|para|to|that|que|in the|in my|en mi|en el|but|pero|without|sin|except|excepto|menos|no|not)\b.*$/i.exec(lastA); if (tail && i + 1 === segs.length - 1) artists[artists.length - 1] = lastA.slice(0, tail.index).trim();
+    artists = artists.filter(Boolean);
+    if (!okName(t0) || !artists.length || !artists.every(okName)) continue;
+    if (!(marked(artists[0]) || marked(t0) || cuts.length >= 2)) continue;
+    const end = arts[arts.length - 1][1] - (tail && i + 1 === segs.length - 1 ? lastA.length - artists[artists.length - 1].length : 0);
+    songs.push({ title: t0, artist: artists[0], artists, s: base + tt[0], e: base + end });
+  }
+  return songs;
+}
 function read(text) {
   /* "la disco" / "discoteca" in Spanish is the club, not the genre */
   /* Spanish genre names, in the English form the genre list and the scene map use */
@@ -126,7 +170,9 @@ function read(text) {
   const esg = s0 => ES_G.reduce((s1, [re, to]) => s1.replace(new RegExp(re.source, "gi"), to), s0);
   /* holiday music in any wording becomes the one genre name the catalog knows: "christmas music" */
   const raw = esg(String(text || "")).replace(/\b(m[uú]sica|canciones|villancicos?|temas)\s+(de\s+)?(navidad(es)?|navide(n|ñ)[oa]s?)\b/gi, "christmas music")
-    .replace(/\b(christmas|holiday|x-?mas)\s+(songs?|music|tunes|hits|carols|classics|playlist)\b/gi, (m, a, b) => (/^(hits|classics)$/i.test(b) ? "christmas music " + b : "christmas music")).replace(/\b(navidad(es)?|navide(n|ñ)[oa]s?|x-?mas)\b/gi, "christmas music").replace(/\b(la|una|las|pa la|pa' la)\s+disco(teca)?s?\b/gi, "$1 fiesta").replace(/\bdiscotecas?\b/gi, "fiesta"); const low = deacc(raw); const cls = clauses(low);
+    .replace(/\b(christmas|holiday|x-?mas)\s+(songs?|music|tunes|hits|carols|classics|playlist)\b/gi, (m, a, b) => (/^(hits|classics)$/i.test(b) ? "christmas music " + b : "christmas music")).replace(/\b(navidad(es)?|navide(n|ñ)[oa]s?|x-?mas)\b/gi, "christmas music").replace(/\b(la|una|las|pa la|pa' la)\s+disco(teca)?s?\b/gi, "$1 fiesta").replace(/\bdiscotecas?\b/gi, "fiesta"); /* "Title - Artist, Artist" lists, the way people paste songs: each title with its artists. Their words aren't styles ("ULTIMATE RAGE" is a song, not rage) */
+  const DASHED = dashSongs(raw); const rawT = DASHED.reduce((s1, d) => s1.slice(0, d.s) + " ".repeat(d.e - d.s) + s1.slice(d.e), raw);
+  const low = deacc(rawT); const cls = clauses(low);
   const tr = { genres: [], moods: [], keywords: [], energy: "", tempo: "", bpm: null, era: null, languages: [], notLanguages: [], explicit: "any", versions: false, avoidHits: false, preferHits: false };
   const out = { name: "", summary: "", include: [], references: [], referenceArtists: [], excludeArtists: [], excludeSongs: [], traits: tr, verifyNames: true };
   const add = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
@@ -195,6 +241,7 @@ function read(text) {
   const qre = /["“”«»]([^"“”«»\n]{2,80})["“”«»](?:\s*(?:by|de|from|of|-|–|—)\s*([^,.;\n"“”]+?))?(?=\s*(?:[,.;\n!?)]|$| and | y | or | o | but | pero ))/g; const masked = raw.split("");
   while ((m = qre.exec(raw))) { const r = ctxRole(m.index); const item = { title: m[1].trim(), artist: (m[2] || "").trim() };
     push(r === "ex" ? "excludeSongs" : r === "must" ? "include" : "references", item); for (let k = m.index; k < m.index + m[0].length; k++) masked[k] = " "; }
+  for (const d of DASHED) { const r = ctxRole(d.s); push(r === "ex" ? "excludeSongs" : r === "must" ? "include" : "references", d.free ? { title: d.title, artist: "", free: true } : { title: d.title, artist: d.artist, artists: d.artists, either: true }); for (let k = d.s; k < d.e; k++) masked[k] = " "; }
   const rest = masked.join(""); const restLow = deacc(rest);
   const byre = /([\p{L}\d'’$!¡?¿&. ]{2,50}?)\s+by\s+([\p{L}\d'’$!&. ]{2,40}?)(?=\s*(?:[,.;\n!?]|$| and | or | but ))/gu;
   while ((m = byre.exec(rest))) { const t0 = m[1].replace(/^.*\b(?:like|such as|include|including|add|must have|has to have|no|not|without|sin|tipo|como|with)\s+/i, "").trim(); if (!t0 || lexiconWord(t0) || t0.split(/\s+/).length > 7) continue;

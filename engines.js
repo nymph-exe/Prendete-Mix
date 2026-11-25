@@ -58,7 +58,8 @@ const SCENE_LANG = { kpop: "ko", khiphop: "ko", jpop_now: "ja", jrock: "ja", ani
   funk_brasileiro: "pt", brazil_mpb: "pt", bossa_nova: "pt", samba_pagode: "pt", sertanejo: "pt", forro: "pt", axe: "pt", brazil_rap: "pt", fado: "pt",
   reggaeton_new: "es", reggaeton_classic: "es", trap_latino: "es", argentina_urbano: "es", chile_urbano: "es", spain_urbano: "es", dembow: "es", bachata: "es", salsa: "es", merengue: "es",
   cumbia: "es", vallenato: "es", corridos_tumbados: "es", regional_mexicano: "es", ranchera: "es", mexico_rap: "es", rock_es: "es", bolero: "es", banda: "es", norteno: "es", tango: "es",
-  cuarteto: "es", champeta: "es", plena_panama: "es", tipico_panama: "es", pop_es: "es", ccm_es: "es", cantautor: "es", folklore_latam: "es" };
+  cuarteto: "es", champeta: "es", plena_panama: "es", tipico_panama: "es", pop_es: "es", ccm_es: "es", cantautor: "es", folklore_latam: "es",
+  cumbia_regia: "es", cumbia_nortena: "es", grupera: "es", michigan_rap: "en" };
 const sceneLang = id => { const ls = new Set(kbOf(id).filter(m => m.tier !== "wide").map(m => SCENE_LANG[m.key] || "?")); return ls.size === 1 && !ls.has("?") ? [...ls][0] : null; };
 const areaLang = t => { const id = (t.aid || [])[0], a = ART.get(id); return (a && a.area ? AREA_LANG.get(String(a.area).toLowerCase()) : null) || (id ? sceneLang(id) : null) || null; };
 function langVerdict(t, R) {
@@ -186,6 +187,19 @@ async function buildProfile(ctx, say) {
   }));
   for (const lists of found0) for (const { p, tr } of lists || []) tr.forEach(t => { (t.aid || []).slice(0, 1).forEach(id => add(id, names(t)[0], .25, "list")); pool.push(Object.assign(t, { _why: `From Deezer's “${p.title}” playlist` })); });
   for (const c of [...W.values()]) if (avoid.has(Core.norm(c.name)) || blocked({ a: c.name || "", aid: [c.id], t: "" }, R)) W.delete(c.id);
+  /* a starting song by an artist no service knows (a handful of followers, no related artists, not in the map): their own
+     other songs, and any artist the map knows who is named in their titles or credits ("Finished shoutout babyfaceray") */
+  const hints = []; await Promise.all(ev.manual.concat(refs).slice(0, 8).map(async t => { const id = (t.aid || [])[0], name = names(t)[0]; if (!id || kbOf(id).length) return;
+    try { const a = await Deezer.artist(id).catch(() => null); if (!a || a.fans > 300) return;
+      /* their co-artists' Deezer pages are often someone else with the same name: not followed */
+      (t.aid || []).slice(1).forEach(x => { if (!ev.manual.concat(refs).some(u => (u.aid || [])[0] === x)) W.delete(x); });
+      const own = (await Deezer.search(name, 50).catch(() => [])).filter(x => (x.aid || []).includes(id) && x.id !== t.id && !Core.sameRecording(x, t));
+      const credits = new Set(own.concat([t]).flatMap(x => x.aid || []));
+      own.slice(0, 8).forEach(x => pool.push(Object.assign(x, { _why: `More from ${name}`, _trust: true })));
+      const flat = Core.norm(own.concat([t]).map(x => `${x.t} ${x.a}`).join(" ")).replace(/[^a-z0-9$]+/g, "");
+      if (SC) for (const [n0, m] of SC.BY_ARTIST) { if (!m.some(x => x.tier !== "wide")) continue; const k = n0.replace(/[^a-z0-9$]+/g, ""); if (k.length < 7 || !flat.includes(k)) continue;
+        const e = sidOf(n0); if (!e || credits.has(e[0]) || hints.some(h => h.id === e[0])) continue;
+        hints.push({ id: e[0], name: e[2], via: name }); add(e[0], e[2], .6, "ref"); } } catch {} }));
   const seenPool = new Set(); for (let i = pool.length - 1; i >= 0; i--) { const t = pool[i]; if (seenPool.has(t.id) || avoid.has(primary(t)) || blocked(t, R)) pool.splice(i, 1); else seenPool.add(t.id); }
   // audio-feature profile from manual approvals and references (delegated picks excluded: QUAL-012)
   say && say("Measuring energy, tempo and mood…");
@@ -212,7 +226,11 @@ async function buildProfile(ctx, say) {
      in a language other than the request's own (English or Spanish) rank lower. Never a filter. */
   const seedless = !genres.length && !(f.keywords || []).length && !refs.length && !(R.dir.artists || []).length && !ev.manual.length && !R.langs.length;
   const home = seedless ? (/\b(canciones|musica|música|de los|para|del|años|que|con|sin)\b/i.test(R.dir.text || "") ? ["es", "en"] : ["en", "es"]) : null;
-  return { fails, pl, R, ev, refs, W, avoid, doubt, negIds, pool: pool.sort(() => Math.random() - .5).slice(0, 400), prof, pat, tgt, moodT, yr, home, epoch: pl.epoch };
+  /* niche starting songs (few plays): picks shouldn't be far more popular than them, unless the request asks for hits */
+  const seedRanks = ev.manual.length <= 12 ? ev.manual.concat(refs).map(t => t.rank || 0).filter(r => r > 0).sort((a, b) => a - b) : [];
+  const medR = seedRanks.length ? seedRanks[Math.floor(seedRanks.length / 2)] : 0;
+  const niche = medR && medR < 300000 && !R.crowd && !R.preferHits && !R.avoidHits ? Math.max(400000, 2 * medR) : 0;
+  return { fails, pl, R, ev, refs, W, avoid, doubt, negIds, hints, niche, pool: pool.sort(() => Math.random() - .5).slice(0, 400), prof, pat, tgt, moodT, yr, home, epoch: pl.epoch };
 }
 function fitOf(t, P) {
   const f = t.f; if (!f || f.none) return { fit: .5, known: false };
@@ -320,8 +338,10 @@ const SWIDE = G.SCENE_WIDE || (typeof require !== "undefined" ? (() => { try { r
 const KBID = new Map(); const NAMES = new Map();
 /* artist name → Deezer artist: the genre map already knows thousands of them, so only other names need a Deezer search */
 let SIDX = null; const NAMEC = new Map();
+const sidx = () => { if (!SIDX) { SIDX = new Map(); for (const [n, v] of Object.entries(SIDS || {})) SIDX.set(SC ? SC.norm(n) : Core.norm(n), [v[0], v[1], n]); } return SIDX; };
+const sidOf = k => sidx().get(k) || null;
 async function idByName(name, minFans = 0) {
-  if (!SIDX) { SIDX = new Map(); for (const [n, v] of Object.entries(SIDS || {})) SIDX.set(SC ? SC.norm(n) : Core.norm(n), [v[0], v[1], n]); }
+  sidx();
   const k = (SC ? SC.norm(name) : Core.norm(name)) + "|" + minFans; if (NAMEC.has(k)) return NAMEC.get(k);
   const hit = SIDX.get(SC ? SC.norm(name) : Core.norm(name)); if (hit && hit[1] >= minFans) { const a = { id: hit[0], name: hit[2], fans: hit[1] }; NAMEC.set(k, a); return a; }
   const a = await Deezer.artistByName(name, minFans); NAMEC.set(k, a || null); return a;
@@ -403,7 +423,7 @@ const REGION = [[/\b(chilean|chileno|spanish|espa(n|ñ)ol|mexican[oa]?|argentin[
 const NICHE = new Set(["emo", "post_hardcore", "nu_metal", "extreme_metal", "doom_metal", "power_metal", "industrial", "ska", "prog_rock", "psych_rock", "krautrock", "hard_rock_modern", "britpop", "post_rock",
   "soft_rock", "art_pop", "indietronica", "electroclash", "idm", "vaporwave", "trip_hop", "dubstep", "hardstyle", "eurodance", "italo_disco", "french_touch", "electro_swing", "swing_bigband", "crooners",
   "smooth_jazz", "latin_jazz", "gypsy_jazz", "southern_rap", "emo_rap", "boombap_now", "jersey_club", "island_reggae", "classic_country", "bluegrass", "modern_classical", "rock_and_roll", "celtic",
-  "neoperreo", "latin_electronic", "desert_blues", "new_age", "female_rap"]);
+  "neoperreo", "latin_electronic", "desert_blues", "new_age", "female_rap", "michigan_rap", "aggressive_phonk"]);
 const nk = x => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "");
 function offRegion(tag, want, R) { for (const [re, l] of REGION) if (re.test(tag)) return !re.test(want) && !(R.langs || []).includes(l) && !(l === "uk" && /\b(uk|british|london|grime|drill)\b/i.test(String(R.dir && R.dir.text || ""))); return false; }
 function scenesFor(P, S) {
@@ -420,14 +440,18 @@ function scenesFor(P, S) {
   /* crowd-pleasers with no style named ("wedding hits everyone knows"): the mainstream scenes everyone knows */
   if (!S.want.length && P.R.crowd && !P.refs.length && !(P.R.dir.artists || []).length && !P.ev.manual.length) for (const k of ["pop_2010s", "pop_2000s", "funk_disco", "latin_pop", "rnb_2000s", "pop_now"]) if (SC.SCENES[k]) add(k, .8);
   /* the artists the user named say the most: their scenes */
-  const named = [...P.refs.map(t => (t.aid || [])[0]), ...(P.R.dir.artists || []).map(a => a.id)].filter(Boolean);
-  const nm = new Map(); for (const id of named) for (const { key, tier } of kbOf(id)) if (tier !== "wide") nm.set(key, (nm.get(key) || 0) + (tier === "core" ? 1 : .8));
+  const named = [...P.refs.map(t => (t.aid || [])[0]), ...(P.R.dir.artists || []).map(a => a.id), ...(P.hints || []).map(h => h.id)].filter(Boolean);
+  /* (an artist found in a starting artist's titles is a weaker clue: only the scenes they define) */
+  const hintIds = new Set((P.hints || []).map(h => h.id));
+  const nm = new Map(); for (const id of named) for (const { key, tier } of kbOf(id)) if (tier !== "wide" && (tier === "core" || !hintIds.has(id))) nm.set(key, (nm.get(key) || 0) + (tier === "core" ? 1 : .8));
   const nmax = Math.max(0, ...nm.values()); for (const [k, v] of nm) if (!S.want.length || W.has(k) || v >= nmax * .99) add(k, 1.2 * v / Math.max(1, nmax));
   /* approvals (not auto-filled): a playlist's history places it in scenes; rejections in a scene pull it down */
   if (!S.want.length) { const ap = new Map(), rj = new Map(); let n = 0;
     for (const t of P.ev.manual) { const m = kbOf((t.aid || [])[0]); if (!m.length) continue; n++; m.forEach(({ key, tier }) => ap.set(key, (ap.get(key) || 0) + (tier === "wide" ? .4 : 1) / m.length)); }
     for (const r of P.ev.rejected) kbOf((r.t.aid || [])[0]).forEach(({ key, tier }) => rj.set(key, (rj.get(key) || 0) + (tier === "wide" ? .4 : 1)));
-    if (n >= 8) for (const [k, v] of ap) { const share = v / n; if (share >= .05 && v >= 2) add(k, Math.min(1, share * 4) * (v + 1) / (v + 1 + .5 * (rj.get(k) || 0))); } }
+    if (n >= 8) for (const [k, v] of ap) { const share = v / n; if (share >= .05 && v >= 2) add(k, Math.min(1, share * 4) * (v + 1) / (v + 1 + .5 * (rj.get(k) || 0))); }
+    /* a few hand-picked songs are like named songs: their artists' scenes */
+    else if (n >= 1) { const mx2 = Math.max(...ap.values()); for (const [k, v] of ap) if (v >= mx2 * .5) add(k, 1.1 * v / mx2 / (1 + .5 * (rj.get(k) || 0))); } }
   const top = [...W].sort((a, b) => b[1] - a[1]).slice(0, 6); const mx = top.length ? top[0][1] : 1;
   return new Map(top.filter(([, v]) => v >= mx * .2).map(([k, v]) => [k, v / mx]));
 }
@@ -483,9 +507,65 @@ function styleGate(sf, S, trusted) {
 const styleScore = (sf, S) => (!S.info ? .5 : sf.known && sf.fit != null ? sf.fit : S.strict ? .4 : .5);
 
 /* ---------- Classic engine ---------- */
+/* Starting points far apart ("ULTIMATE RAGE", "WGSU", "Pégale Papá"; or "phonk, Detroit rap and Monterrey cumbia") make one
+   playlist for several moods rather than one blend: each part gets its share of the songs, searched from its own starting
+   points, so one world can't crowd out the others or be judged by another's style. Starting points that share a scene, a
+   neighbouring scene or an artist stay together. */
+function partsOf(ctx) {
+  const pl = ctx.latest(), get = ctx.getTrack, d = pl.direction || {}, f = d.form || {};
+  const ev = Core.evidence(pl, get); if (ev.manual.length > 8 || ev.rejected.length > 12) return null;
+  const songs = [...new Map(ev.manual.concat((d.refs || []).map(get).filter(Boolean)).map(t => [t.id, t])).values()];
+  const P1 = { R: { era: f.era || null, dir: { text: d.text || "" }, langs: f.langs || [], crowd: false }, refs: [], ev: { manual: [], rejected: [] } };
+  const scOfStyle = st => new Set(st.length ? [...scenesFor(P1, { want: st, broad: [], notS: [], taste: [], strict: true }).keys()] : []);
+  const src = [];
+  for (const t of songs) src.push({ kind: "song", t, ids: new Set((t.aid || []).slice(0, 3)), sc: new Set((t.aid || []).slice(0, 2).flatMap(id => kbOf(id).filter(m => m.tier !== "wide").map(m => m.key))) });
+  for (const a of d.artists || []) src.push({ kind: "artist", a, ids: new Set([a.id]), sc: new Set(kbOf(a.id).filter(m => m.tier !== "wide").map(m => m.key)) });
+  for (const k of f.keywords || []) { const st = wantStyles({ keywords: [k] }); src.push({ kind: "style", k, sc: scOfStyle(st), st }); }
+  for (const g of (f.genres || []).filter(g => g && g.name)) { const st = wantStyles({ genres: [g] }); src.push({ kind: "genre", g, sc: scOfStyle(st), st }); }
+  if (src.length < 2 || src.length > 7 || !src.some(x => x.kind === "song" || x.kind === "style" || x.kind === "artist")) return null;
+  const near = (a, b) => { for (const x of a) { if (b.has(x)) return true; const n = (SC && SC.SCENES[x] && SC.SCENES[x].near) || []; if (n.some(y => b.has(y))) return true; } return false; };
+  const same = (x, y) => (x.ids && y.ids && [...x.ids].some(i => y.ids.has(i))) || (x.sc.size && y.sc.size && (near(x.sc, y.sc) || near(y.sc, x.sc)))
+    || ((x.st || y.st) && (x.st || []).concat(y.st || []).length && (x.st || []).some(a => (y.st || []).some(b => tagSim(a, b) >= .85)));
+  const up = src.map((_, i) => i), find = i => (up[i] === i ? i : (up[i] = find(up[i])));
+  for (let i = 0; i < src.length; i++) for (let j = i + 1; j < src.length; j++) if (same(src[i], src[j])) up[find(i)] = find(j);
+  /* a genre the reader added alongside a named style ("cumbia" → Cumbia) belongs with that style, not in a part of its own */
+  src.forEach((x, i) => { if (x.kind !== "genre") return; const j = src.findIndex((y, k) => k !== i && y.kind === "style" && (y.st || []).some(a => (x.st || []).some(b => tagSim(a, b) >= .7) || tagSim(a, x.g.name) >= .7)); if (j >= 0) up[find(i)] = find(j); });
+  const groups = new Map(); src.forEach((x, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(x); });
+  const parts = [...groups.values()].filter(g => g.some(x => x.kind !== "genre"));
+  if (parts.length < 2 || parts.length > 4) return null;
+  return parts.map(g => {
+    const scName = (() => { const k = g.flatMap(x => [...x.sc])[0]; return k && SC && SC.SCENES[k] ? SC.SCENES[k].name : null; })();
+    const st = g.find(x => x.kind === "style"), so = g.find(x => x.kind === "song"), ar = g.find(x => x.kind === "artist");
+    const label = st ? st.k : scName || (so ? `songs like “${so.t.t}”` : ar ? ar.a.name : "");
+    return { label, songs: g.filter(x => x.kind === "song").map(x => x.t), artists: g.filter(x => x.kind === "artist").map(x => x.a),
+      keywords: g.filter(x => x.kind === "style").map(x => x.k), genres: g.filter(x => x.kind === "genre").map(x => x.g) }; });
+}
+/* what one part sees: its own starting points; the other parts' songs stay on the playlist (no duplicates) but don't steer it */
+function viewOf(pl, w, parts) {
+  const mine = new Set(w.songs.map(t => t.id)), theirs = new Set(parts.filter(x => x !== w).flatMap(x => x.songs.map(t => t.id)));
+  const rels = {}; for (const k in pl.rels) { const r = pl.rels[k]; rels[k] = theirs.has(k) && !mine.has(k) ? Object.assign({}, r, { origin: "OTHER_PART" }) : r; }
+  const d = pl.direction || {}, form = Object.assign({}, d.form || {}, { keywords: w.keywords, genres: w.genres });
+  return Object.assign({}, pl, { rels, direction: Object.assign({}, d, { refs: (d.refs || []).filter(id => mine.has(id)), artists: w.artists, form, text: w.keywords.join(", ") }) });
+}
+async function blendParts(ctx, opt, parts) {
+  const say = opt.onProgress || (() => {}), target = opt.target, n = parts.length;
+  const share = parts.map((_, i) => Math.floor(target / n) + (i < target % n ? 1 : 0)), got = parts.map(() => 0); let found = 0, checked = 0, errs = [];
+  say(`${n} different starting points (${parts.map(w => w.label).join(" · ")}): finding songs for each…`);
+  const run = (w, i, k) => Classic.generate(Object.assign({}, ctx, { latest: () => viewOf(ctx.latest(), w, parts) }),
+    Object.assign({}, opt, { target: k, _part: w.label, onProgress: m => { if (!found) say(m.startsWith("Finding songs") ? m.replace(/\d+\/\d+/, `0/${target}`) : m); },
+      onBatch: async l => { const r = await opt.onBatch(l); found += r.added; got[i] += r.added; say(`Finding songs… ${found}/${target} found`); return r; } }))
+    .then(r => { checked += (r && r.checked) || 0; }, e => { errs.push(e); if (opt.debug) opt.debug("part", `${w.label}: ${e.message}`); });
+  await Promise.all(parts.map((w, i) => run(w, i, share[i])));
+  /* a part that couldn't fill its share leaves the room to the parts that could */
+  const short = target - found, full = parts.map((w, i) => [w, i]).filter(([, i]) => got[i] >= share[i]);
+  if (short > 0 && full.length && !(opt.stopped && opt.stopped())) await Promise.all(full.map(([w, i], j) => run(w, i, Math.floor(short / full.length) + (j < short % full.length ? 1 : 0))));
+  if (!found && errs.length === parts.length) throw errs[0];
+  return { found, checked, parts: parts.map((w, i) => ({ label: w.label, found: got[i] })) };
+}
 const Classic = {
   id: "classic", label: "Classic",
   async generate(ctx, opt) {
+    if (!opt._part) { const parts = partsOf(ctx); if (parts) return blendParts(ctx, opt, parts); }
     const say = opt.onProgress || (() => {}), stop = () => opt.stopped && opt.stopped();
     const P = await buildProfile(Object.assign({ stopped: opt.stopped }, ctx), say); MBQ.n = 0;
     const S = await styleProfile(P, ctx, say); MBQ.n = 6;
@@ -596,7 +676,8 @@ const Classic = {
     for (const k in latest.rels) { const r = latest.rels[k]; if (r.state === "REJECTED") continue; const t = ctx.getTrack(k); if (!t) continue; const a = primary(t);
       if (r.state === "APPROVED") apCount.set(a, (apCount.get(a) || 0) + 1); else inPl.set(a, (inPl.get(a) || 0) + 1); }
     for (const [a, n] of apCount) inPl.set(a, (inPl.get(a) || 0) + Math.max(0, n - apShare + 4));
-    const plCap = P.pat.repetition ? 2 : 4, capNew = P.pat.repetition ? 1 : 2, capKnown = P.pat.repetition ? 0 : broadTaste ? 2 : 1, capRef = P.pat.repetition ? 1 : 3;
+    const small = opt._part && target <= 12; /* a part of a larger playlist: one artist shouldn't take a third of it */
+    const plCap = P.pat.repetition ? 2 : 4, capNew = P.pat.repetition || small ? 1 : 2, capKnown = P.pat.repetition ? 0 : broadTaste ? 2 : 1, capRef = P.pat.repetition ? 1 : small ? 1 : 3;
     const refIds = new Set(pos.filter(c => c.tags.has("ref")).map(c => c.id)); const isRef = t => refIds.has((t.aid || [])[0]);
     const capOf = t => (isRef(t) ? capRef : capNew);
     const needLang = P.R.langs.length || P.R.notLangs.length; const SW = S.strict ? 1.4 : S.info ? (broadTaste ? 1.2 : .8) : 0;
@@ -641,13 +722,15 @@ const Classic = {
       const styleOk = x => { if (!S.strict) return true; const sf = styleFit((x.t.aid || [])[0], S); return !sf.known || styleGate(sf, S, true); };
       const sc = b.filter(x => !x.eraOut && styleOk(x) && !eligible(x.t, P.R, ctx.getTrack)).map(x => { const { fit, known, asked, est } = fitOf(x.t, P); const pen = penalty(x.t, P);
         const negP = (P.doubt.has(primary(x.t)) ? .5 : 0) + .25 * Math.min(2, NEG.get((x.t.aid || [])[0]) || 0);
-        const km = (broadTaste ? .5 : 1) * (S.scenes && S.scenes.size ? kbOf((x.t.aid || [])[0]).reduce((u, { key, tier }) => Math.max(u, (S.scenes.get(key) || 0) * (tier === "core" ? (P.R.gems ? .1 : .3) : tier === "wide" ? (P.R.gems ? .25 : .12) : (P.R.gems ? .4 : .25))), 0) : 0);
+        const elsewhere = !S.strict && !broadTaste && S.scenes && S.scenes.size >= 1 && (() => { const m = kbOf((x.t.aid || [])[0]).filter(y => y.tier !== "wide"); return m.length && !m.some(y => S.scenes.has(y.key)); })() ? .45 : 0;
+        const km = -elsewhere + (broadTaste ? .5 : 1) * (S.scenes && S.scenes.size ? kbOf((x.t.aid || [])[0]).reduce((u, { key, tier }) => Math.max(u, (S.scenes.get(key) || 0) * (tier === "core" ? (P.R.gems ? .1 : .3) : tier === "wide" ? (P.R.gems ? .25 : .12) : (P.R.gems ? .4 : .25))), 0) : 0);
         /* crowd-pleasers: songs most people know, clean when possible; little-known songs are a poor fit for a wedding */
         const crowdB = P.R.crowd ? .8 * Math.min(1, (x.t.rank || 0) / 700000) - ((x.t.rank || 0) < 250000 ? .35 : 0) - (x.t.exp === "explicit" ? .25 : 0) : 0;
         const refB = isRef(x.t) ? .3 : 0; const yd = P.yr && x.t.y ? (x.t.y < P.yr.lo ? P.yr.lo - x.t.y : x.t.y > P.yr.hi ? x.t.y - P.yr.hi : 0) : 0; const yearP = .12 * Math.min(4, yd);
         const wi = wantIdx(x.t); const mix = S.balance && wi >= 0 && (WC[wi] || 0) < (found + 1) / S.want.length ? .35 : 0;
         /* unless hits are unwanted, a scene's well-known songs are the safer picks */
-        const hot = P.R.avoidHits ? .6 * Math.max(0, Math.min(1, ((x.t.rank || 0) - (P.R.gems ? 250000 : 450000)) / 400000)) : P.R.preferHits ? 0 : -.25 * Math.min(1, (x.t.rank || 0) / 700000);
+        const hot = P.R.avoidHits ? .6 * Math.max(0, Math.min(1, ((x.t.rank || 0) - (P.R.gems ? 250000 : 450000)) / 400000)) : P.R.preferHits ? 0
+          : P.niche ? .7 * Math.max(0, Math.min(1, ((x.t.rank || 0) - P.niche) / 300000)) : -.25 * Math.min(1, (x.t.rank || 0) / 700000);
         return Object.assign(x, { fit, wi, s: .7 * (x.as / maxScore) + 1.1 * fit + SW * styleScore(x.sf || {}, S) + .25 * Math.random() - pen - hot + mix + refB - yearP - negP + km + crowdB, ok: !(known && fit < (isRef(x.t) && !P.moodT.length ? .3 : asked ? (P.home && P.moodT.length ? .55 : .42) : .35) - (est ? .05 : 0)) && pen < 1.2 && !(P.R.avoidHits && x.t.f && x.t.f.pop >= 85) && !learnedOut(x.t, P) && !homeOut(x.t, P)
           /* "hits everyone knows" with no style named: songs most people know; a request for songs with no style named: no symphonies */
           && !(P.R.crowd && x.t.rank && x.t.rank < (P.home ? 450000 : 250000)) && !(P.home && CLASSICAL.test(x.t.t)) }); });
@@ -676,7 +759,7 @@ const Classic = {
       const picks = [];
       group.forEach((c, k) => {
         if (!c.pool) { c.sf = styleFit(c.id, S); if (!styleGate(c.sf, S, trustedC(c))) return; }
-        const cap = c.pool ? 3 : c.via === "known" ? capKnown + (capKnown ? 1 : 0) : c.via === "ref" ? capRef + 1 : capNew + (P.R.era || P.moodT.length || P.tgt.bpm ? 1 : 0); let got = 0;
+        const cap = c.pool ? (small ? 2 : 3) : c.via === "known" ? capKnown + (capKnown ? 1 : 0) : c.via === "ref" ? capRef + 1 : capNew + (P.R.era || P.moodT.length || P.tgt.bpm ? 1 : 0); let got = 0;
         for (const t0 of tops[k]) {
           if (got >= cap || found + (buf.length + picks.length) * .7 >= target + 6) break;
           if (seen.has(t0.id)) continue; seen.add(t0.id);
@@ -709,7 +792,8 @@ const Classic = {
         const aa = ART.get((t.aid || [])[0]) || {}, by = aa.by ? aa.by + (aa.type === "Person" ? 20 : 0) : null, maybeReissue = P.R.era && t.y > P.R.era[1] && by && by <= P.R.era[1];
         if (eligible(Object.assign({}, t, { lang: null }, maybeReissue ? { y: null } : {}), P.R, ctx.getTrack)) return;
         const c = picks[k].c; const from = [...(c.from || [])].filter(Boolean).slice(0, 2);
-        const why = c.pool ? picks[k].t0._why : c.via === "known" ? `More from ${c.name}, already on this playlist` : c.via === "ref" ? `By ${c.name}, one of your reference artists`
+        const hint = (P.hints || []).find(h => h.id === c.id);
+        const why = c.pool ? picks[k].t0._why : c.via === "known" ? `More from ${c.name}, already on this playlist` : hint ? `${c.name} comes up in ${hint.via}'s songs` : c.via === "ref" ? `By ${c.name}, one of your reference artists`
           : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : c.via === "kb" && c.kb ? (c.kb.tier === "core" ? `One of the artists who define ${c.kb.scene}` : c.kb.tier === "next" ? `A newer or deeper name in ${c.kb.scene}` : `Close to several ${c.kb.scene} artists`) : (from.length ? `Similar to ${from.join(" and ")}` : "Close to this playlist's artists");
         buf.push({ t, why, as: c.pool ? maxScore * (t._trust ? .6 : .4) : c.score, sf: picks[k].sf });
       });
@@ -937,7 +1021,7 @@ const AI = {
 /* ---------- AI answers are untrusted: keep only the shapes the app expects ---------- */
 const arr = x => (Array.isArray(x) ? x : []);
 const str = x => (typeof x === "string" ? x : typeof x === "number" ? String(x) : "").trim().slice(0, 300);
-const songsOf = x => arr(x).filter(it => it && typeof it === "object").map(it => ({ title: str(it.title), artist: str(it.artist), why: str(it.why) })).filter(it => it.title);
+const songsOf = x => arr(x).filter(it => it && typeof it === "object").map(it => Object.assign({ title: str(it.title), artist: str(it.artist), why: str(it.why) }, it.either === true ? { either: true } : {}, it.free === true ? { free: true } : {})).filter(it => it.title);
 const namesOf = x => (typeof x === "string" ? x.split(/\s*,\s*/) : arr(x)).map(n => (n && typeof n === "object" ? str(n.name) : str(n))).filter(Boolean);
 function cleanReading(j) {
   j = j && typeof j === "object" ? j : {}; const t = j.traits && typeof j.traits === "object" ? j.traits : {};
@@ -953,12 +1037,25 @@ function cleanReading(j) {
 
 /* ---------- reading → direction (shared by the Classic reader and the AI reader) ----------
    Every song and artist is looked up in the catalog first; anything that can't be found is reported, never invented. */
+/* a pasted line with no clear title/artist split: the catalog's best match, kept only when its title or an artist's name is in the line */
+async function freeFind(line) {
+  const clean = x => Core.norm(x).replace(/[^a-z0-9$ ]+/g, " ").replace(/\s+/g, " ").trim(), loose = x => clean(x).replace(/(.)\1+/g, "$1");
+  const L = " " + clean(line) + " ", LL = " " + loose(line) + " ";
+  const inL = x => { const k = clean(x); return k.length >= 3 && L.includes(" " + k + " "); }, nearL = x => { const k = loose(x); return k.length >= 4 && LL.includes(" " + k + " "); };
+  const ok = x => inL(Core.baseTitle(x.t) || x.t) && String(x.a || "").split(/;\s*/).some(a => inL(a) || nearL(a));
+  /* the whole line, then the first word with each other name in it ("WGSU BigWan"): one misspelled name shouldn't sink the search */
+  const words = clean(line).split(" "), names = line.split(/[,•·;]|\s+(?:and|y|&)\s+/).map(clean).filter(Boolean);
+  const qs = [...new Set([words.join(" "), ...names.slice(1).map(n => words[0] + " " + n), ...names.slice(1).map(n => names[0] + " " + n), words.slice(0, 2).join(" ")])].filter(q => q.length >= 3).slice(0, 6);
+  for (const q of qs) { const r = await Deezer.search(q, 10).catch(() => []); const hit = (r || []).find(ok);
+    if (hit) { try { const full = await Deezer.track(hit.dz || String(hit.id).replace(/^dz:/, "")); return full || hit; } catch { return hit; } } }
+  return null;
+}
 async function applyReading(j, st, o = {}) {
   j = cleanReading(j);
   const say = o.say || (() => {}), d = st.dir, missing = [], unchecked = [], strict = !!j.verifyNames;
   d.exclude = d.exclude || { artists: [], songs: [] }; d.form = d.form || {};
   const look = async (it, into) => { if (!it || !it.title) return; say(`Looking up ${it.title}…`); const label = it.artist ? `${it.title} — ${it.artist}` : it.title;
-    let t = null; try { t = it.artist ? await Cat.resolve(it.title, it.artist) : null; } catch { unchecked.push(label); return; } if (!t) { missing.push(label); return; }
+    let t = null; try { t = it.artist ? await Cat.resolve(it.title, it.artist) : null; if (!t && it.either) t = await Cat.resolve(it.artist, it.title); if (!t && it.free) t = await freeFind(it.title); } catch { unchecked.push(label); return; } if (!t) { missing.push(label); return; }
     if (o.keep) o.keep(t); if (![d.refs, st.must, d.exclude.songs].some(a => a.includes(t.id))) into.push(t.id); };
   for (const it of (j.include || []).slice(0, 40)) await look(it, st.must);
   for (const it of (j.references || []).slice(0, 20)) await look(it, d.refs);
@@ -1002,7 +1099,7 @@ async function applyReading(j, st, o = {}) {
   return { summary: j.summary || "", missing: [...new Set(missing)], unchecked: [...new Set(unchecked)] };
 }
 
-const API = { workingModel, applyReading, cleanReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
+const API = { _partsOf: partsOf, workingModel, applyReading, cleanReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
 G.Engines = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

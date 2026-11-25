@@ -24,4 +24,14 @@ r = R.read("K-pop dance songs, high energy, hidden gems only"); eq("hidden gems"
 r = R.read("no Reggaeton, more Dembow like El Alfa"); eq("ruled-out genre dropped", r.traits.genres, []); eq("genre not an artist", r.excludeArtists, []);
 r = R.read("funk brasileiro para la previa, bien perreo"); eq("perreo is the vibe here", [r.traits.genres, r.traits.keywords], [["Brazilian Music"], ["funk brasileiro"]]);
 r = R.read("perreo intenso para la disco"); eq("la disco is the club", r.traits.keywords, ["perreo"]);
+/* pasted song lists (25 Nov 2026): "Title - Artist, Artist", one per line or inline; their words aren't styles */
+r = R.read("ULTIMATE RAGE - HUSSVRX • 222.222t\n\nand WGSU 8deucee7, BigWan, Illwill\n\nand Pégale Papá - Los Plebeyos, Celso Piña");
+eq("line list: every song, the dash-less line kept for a free search", r.references.map(x => [x.title, x.artist, !!x.free]), [["ULTIMATE RAGE", "HUSSVRX", false], ["WGSU 8deucee7, BigWan, Illwill", "", true], ["Pégale Papá", "Los Plebeyos", false]]);
+eq("a song title's words aren't styles", r.traits.keywords, []);
+r = R.read("ULTIMATE RAGE - HUSSVRX, 222.222t, WGSU - 8deuceee7, BigWan, Illwill and Pégale Papá - Los Plebeyos, Celso Piña");
+eq("inline list", r.references.map(x => x.title + " | " + x.artist), ["ULTIMATE RAGE | HUSSVRX", "WGSU | 8deuceee7", "Pégale Papá | Los Plebeyos"]);
+r = R.read("Blinding Lights - The Weeknd but no Drake"); eq("a clause after the artist stays a clause", [r.references.map(x => x.artist), r.excludeArtists], [["The Weeknd"], ["Drake"]]);
+eq("a year range isn't a song", R.read("songs from 2010 - 2015").references, []); eq("a dash in plain words isn't a song", R.read("chill - relaxing music for studying").references, []);
+eq("“genre - mood” isn't a song", R.read("reggaeton - perreo duro para el gym").references, []);
+r = R.read("aggressive phonk, Michigan street rap and Monterrey cumbia"); eq("regional styles keep their region", r.traits.keywords.slice().sort(), ["aggressive phonk", "michigan street rap", "monterrey cumbia"]);
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;
