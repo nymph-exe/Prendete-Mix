@@ -277,7 +277,7 @@ async function backfillLanguages() {
 
 /* ---------- first run: migrate Préndete (Section 19) ---------- */
 async function firstRun() {
-  const seed = await fetch("seed.json", { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error("seed " + r.status); return r.json(); });
+  const seed = await fetch("data/seed.json", { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error("seed " + r.status); return r.json(); });
   let legacy = null; try { legacy = JSON.parse(localStorage.getItem("prendete-standalone-v1") || "null"); } catch {}
   const out = Migrate.build(seed, legacy);
   const meta = { v: 3, created: Date.now(), order: out.playlists.map(p => p.id), never: out.never, country: out.prefs.country || "us", autoNext: out.prefs.autoNext !== false, ai: {}, unsorted: out.unsorted,

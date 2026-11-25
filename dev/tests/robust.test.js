@@ -1,7 +1,7 @@
 /* Regression tests from the D.A.T.A. C.H.E.C.K. (24 Nov 2026): junk input, damaged data, untrusted AI answers. Offline. */
-const D = process.env.V3 || "..";
-const Core = require(D + "/core.js"), R = require(D + "/reader.js"), E = require(D + "/engines.js"), M = require(D + "/migrate.js");
-const seed = require(D + "/seed.json");
+const APP = __dirname + "/../../app", DATA = __dirname + "/../../data";
+const Core = require(APP + "/core.js"), R = require(APP + "/reader.js"), E = require(APP + "/engines.js"), M = require(APP + "/migrate.js");
+const seed = require(DATA + "/seed.json");
 let pass = 0, fail = 0;
 const ok = (name, c, info) => { if (c) pass++; else { fail++; console.log("FAIL", name, info === undefined ? "" : JSON.stringify(info)); } };
 const throwsShape = f => { try { f(); return false; } catch (e) { return e.code === "SHAPE" || e.code === "INVARIANT"; } };
@@ -34,7 +34,7 @@ ok("language: an instrumental isn't “in Spanish”", E.langVerdict({ aid: [900
 ok("language: no lyrics, Mexican artist: unknown", E.langVerdict({ aid: [9002] }, RL) === "unknown");
 
 /* Classic check: session-style credits and background-music acts */
-const AR = require(D + "/artists.js"), SC = require(D + "/scenes.js");
+const AR = require(APP + "/artists.js"), SC = require(DATA + "/scenes.js");
 ok("ban: “Daddy Yankee: Bzrp Music Session” is his song", AR.banned({ t: "Daddy Yankee: Bzrp Music Session, Vol. 0/66", a: "Bizarrap", aid: [1] }, AR.banSet([{ name: "Daddy Yankee", dz: [3839] }])));
 ok("background-music projects are left out, real jazz acts aren't", ["The Jazz Lounge", "Relaxing Jazz Music", "Coffee Shop Jazz"].every(SC.novelty) && !["John Coltrane", "Jazz at Lincoln Center Orchestra", "Snarky Puppy"].some(SC.novelty));
 
@@ -86,7 +86,7 @@ const a = { provider: "gemini", key: "k", model: "auto", models: [{ id: "gemini-
       try { op(); Core.validate(pl); } catch (e) { if (!(e instanceof Core.OpError) || e.code === "INVARIANT") broken++; pl = before; } } }
   ok("random operations never break a playlist", broken === 0, broken);
   /* titles and lyrics as language clues (25 Nov 2026) */
-{ const C = globalThis.Catalog || require("../catalog.js"), g = C.guessLang;
+{ const C = globalThis.Catalog || require(__dirname + "/../../app/catalog.js"), g = C.guessLang;
   ok("Spanish titles are read from their spelling and words; Portuguese ones stay Portuguese", g("Tití Me Preguntó") === "es" && g("Pégale Papá") === "es" && g("Tu Falta De Querer") === "es" && g("Ai Se Eu Te Pego") === "pt" && g("Garota de Ipanema") === "pt" && g("Shape of You") === "en", [g("Tití Me Preguntó"), g("Ai Se Eu Te Pego"), g("Garota de Ipanema")]);
   const fr = C.detectLang("Je ne sais pas ce que tu veux de moi, tu me dis que tu es là, mais je ne te vois pas. Dans la rue les gens me regardent, je suis seul ce soir, on se voit demain, laisse-moi tranquille, je te dis que c'est fini, que la vie me fait mal, que je te donne tout");
   const mix = C.detectLang("Baby I love you, tú eres mi vida, I just wanna be with you tonight, no quiero nada más que estar contigo, you know I need you baby, dime que me quieres, eres todo para mí, all night long");

@@ -27,7 +27,7 @@ function h(tag, attrs, ...kids) {
 }
 const btn = (label, cls, onclick, o = {}) => { const b = h("button", Object.assign({ class: "btn " + (cls || ""), type: "button", onclick }, o)); if (o.ic) b.innerHTML = I(o.ic); b.append(label); return b; };
 const ibtn = (ic, label, onclick, cls = "", o = {}) => h("button", Object.assign({ class: "ib " + cls, type: "button", "aria-label": label, title: label, icon: ic, onclick }, o));
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleep = Core.sleep;
 const fmt = t => { t = Math.max(0, Math.floor(t || 0)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
 const https = u => (typeof u === "string" && /^(https:\/\/|data:image\/)/.test(u) ? u : null);
 const artistsOf = a => String(a || "").split(/;\s*/).join(", ");

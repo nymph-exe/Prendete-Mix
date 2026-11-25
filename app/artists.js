@@ -14,7 +14,7 @@
 const Core = G.Core || require("./core.js");
 const Cat = G.Catalog || require("./catalog.js");
 const { Deezer, ITunes, MusicBrainz, Wikidata } = Cat;
-const nn = s => Core.norm(s).replace(/\s+/g, "");
+const nn = Core.nameKey;
 const uniq = a => [...new Set(a.filter(x => x != null && x !== "" && x !== 0))];
 
 /* ---------- entries ---------- */

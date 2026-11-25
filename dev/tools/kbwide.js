@@ -1,10 +1,10 @@
 /* Builds scenes.wide.js: for each scene, the artists Deezer relates to several of its core artists.
    They become the map's third tier ("wide"): weaker than core and next, but they widen every scene
-   past what was written by hand. Run from anywhere: node tools/kbwide.js
+   past what was written by hand. Run from anywhere: node dev/tools/kbwide.js
    Deezer answers are cached (MIXER_CACHE, or a file in the system temp folder) so reruns are quick. */
-const V = __dirname + "/..";
-globalThis.Core = require(V + "/core.js"); const Cat = require(V + "/catalog.js");
-const SC = require(V + "/scenes.js"); const PSEUDO = require(V + "/engines.js")._pseudo; const IDS = require(V + "/scenes.ids.js");
+const APP = __dirname + "/../../app", DATA = __dirname + "/../../data";
+globalThis.Core = require(APP + "/core.js"); const Cat = require(APP + "/catalog.js");
+const SC = require(DATA + "/scenes.js"); const PSEUDO = require(APP + "/engines.js").pseudoArtist; const IDS = require(DATA + "/scenes.ids.js");
 const fs = require("fs"); const CF = process.env.MIXER_CACHE || require("path").join(require("os").tmpdir(), "mixer-related.json");
 const cache = fs.existsSync(CF) ? JSON.parse(fs.readFileSync(CF)) : {};
 (async () => {
@@ -34,7 +34,7 @@ const cache = fs.existsSync(CF) ? JSON.parse(fs.readFileSync(CF)) : {};
     out[key] = list.map(([id, c]) => [id, c.fans, c.name]); total += list.length;
     report.push(`${key} (≥${list[0][1].need}): ${list.slice(0, 12).map(([, c]) => c.name + "×" + c.n).join(", ")}${list.length > 12 ? ` … +${list.length - 12}` : ""}`);
   }
-  fs.writeFileSync(V + "/scenes.wide.js", "/* MIXER scene map, third tier (built " + new Date().toISOString().slice(0, 10) + " by tools/kbwide.js): artists Deezer relates to several of a scene's core artists. scene → [[deezer id, fans, name]] */\n(function (G) { const WIDE = " + JSON.stringify(out) + ";\nG.SCENE_WIDE = WIDE; if (typeof module !== \"undefined\") module.exports = WIDE; })(typeof window !== \"undefined\" ? window : globalThis);\n");
-  fs.writeFileSync("/tmp/wide_report.txt", report.join("\n"));
-  console.log("scenes widened", Object.keys(out).length, "entries", total, "new artists", new Set(Object.values(out).flat().map(x => x[0]).filter(id => !inMap.has(id))).size, Math.round(fs.statSync(V + "/scenes.wide.js").size / 1024) + " KB");
+  fs.writeFileSync(DATA + "/scenes.wide.js", "/* MIXER scene map, third tier (built " + new Date().toISOString().slice(0, 10) + " by tools/kbwide.js): artists Deezer relates to several of a scene's core artists. scene → [[deezer id, fans, name]] */\n(function (G) { const WIDE = " + JSON.stringify(out) + ";\nG.SCENE_WIDE = WIDE; if (typeof module !== \"undefined\") module.exports = WIDE; })(typeof window !== \"undefined\" ? window : globalThis);\n");
+  fs.writeFileSync(require("path").join(require("os").tmpdir(), "wide_report.txt"), report.join("\n"));
+  console.log("scenes widened", Object.keys(out).length, "entries", total, "new artists", new Set(Object.values(out).flat().map(x => x[0]).filter(id => !inMap.has(id))).size, Math.round(fs.statSync(DATA + "/scenes.wide.js").size / 1024) + " KB");
 })();

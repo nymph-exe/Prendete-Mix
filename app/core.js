@@ -27,6 +27,9 @@ class OpError extends Error { constructor(code, message, info) { super(message);
 const now = () => Date.now();
 const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const uniq = a => [...new Set(a)];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+/* Deezer's explicit_lyrics codes: 1 and 4 explicit, 3 clean */
+const expOf = ex => (ex === 1 || ex === 4 ? "explicit" : ex === 3 ? "clean" : "");
 
 /* ---------- track identity (QUAL-019, user policy) ----------
    Same recording = same song (single / album / remaster / deluxe merge).
@@ -255,7 +258,7 @@ function evidence(pl, getTrack) {
   return e;
 }
 
-const API = { checkShape, checkTrack, CONFIG, capacityOptions, S, ORIGIN, MANUAL_ORIGINS, REASONS, OpError, uid, norm, firstArtist, versionTags, baseTitle, explicitClass, sameRecording, isrcYear,
+const API = { sleep, expOf, nameKey: s => norm(s).replace(/\s+/g, ""), checkShape, checkTrack, CONFIG, capacityOptions, S, ORIGIN, MANUAL_ORIGINS, REASONS, OpError, uid, norm, firstArtist, versionTags, baseTitle, explicitClass, sameRecording, isrcYear,
   createPlaylist, counts, stateOf, idsIn, findDuplicate, addMandatory, approve, reject, restore, confirmKeep, appendCandidates, fillCommit, setCapacity, setStatus, reorder, editDirection, validate, evidence, log };
 G.Core = API;
 if (typeof module !== "undefined") module.exports = API;

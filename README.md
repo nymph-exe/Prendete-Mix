@@ -4,34 +4,46 @@ A playlist maker that runs entirely in the browser: https://nymph-exe.github.io/
 
 Internally it's still the Préndete app, named after the playlist that started it (Préndete 🔥).
 
-Each playlist has its own direction, capacity, recommendations, rejections and status. Nothing is shared between playlists.
+Each playlist has its own direction, capacity, recommendations, rejections and status. Nothing is shared between playlists. Data lives in this browser (IndexedDB); Settings → Save backup keeps a copy or moves it to another device.
 
-- **Classic** recommendations, with no AI and no keys: reads a typed description (English or Spanish) with built-in rules and recognizes 2,000+ genre names (the MusicBrainz genre list). It starts from a **scene map** of about 580 scenes and 11,000 artists. The curated core (`scenes.js`) has 184 scenes, from emo, tango and gospel to plena panameña, deutschrap, Michigan street rap, Monterrey cumbia, jazz rap, country rap and cumbia rap. Each has the artists who define it and the newer or deeper names that carry it (4,960 artists, Deezer IDs in `scenes.ids.js`), how scenes connect, and novelty acts to skip. A third, lighter tier (`scenes.wide.js`, built by `tools/kbwide.js`) adds 3,900 more artists that Deezer relates to several of a scene's core artists; it widens the search but never decides which scenes a request is about. An auto tier (`scenes.auto.js`, built by `tools/kbauto.js`) adds a small scene for 399 more genres the core doesn't cover (acid house, psychobilly, Texas country, cumbia peruana, chicano rap, funk ostentação…): the artists behind the songs ListenBrainz listeners tagged with that genre, found on Deezer. Auto scenes are used only when a request names their genre. Every scene tag is a style a description can name. Subgenre scenes (prog rock, death metal, gypsy jazz…) need to be named, so a plain "rock" or "jazz" still means the broad scenes, and regional scenes (K-hip hop, Arabic pop…) answer a plain "hip hop" or "pop" only when the request points there. Starting points far apart (three songs from three different worlds, or "phonk, Detroit rap and Monterrey cumbia") are built in parts: each gets its share of the playlist, searched from its own starting points, so one world can't crowd out another or be judged by its style. A fusion ("jazz-influenced hip hop", "cumbia mixed with rap") stays one playlist: a genre that already names the mix (jazz rap) leads, and songs whose artists carry both sounds rank first; "a blend of jazz and hip hop" is a mix of the two, built in parts. Song lists pasted as "Title - Artist" (inline or one per line) are read as songs, and their words aren't taken as styles. Genre and language words in Japanese, Korean, Chinese, Russian, Arabic and Hindi script are read too ("日本のシティポップ"). A starting song by an artist no service knows brings in their own other songs and any artist the map knows who is named in their titles or credits; niche starting songs keep the picks niche. Named styles and reference artists pick the scenes; a playlist's approvals place it in scenes too, and rejections in a scene pull it down. It finds songs through Deezer (related artists, artist radios, editorial playlists) and ListenBrainz listening data (similar artists, songs played together, songs tagged with a genre). Every artist, and each song's lead artist, is checked against genre data from MusicBrainz/ListenBrainz tags, Wikidata and Discogs styles, plus the song's own listener tags, so picks stay in the requested style. Release years come from first releases on ListenBrainz/MusicBrainz, since Deezer often gives a compilation's or remaster's year. Compilation acts named after a style ("Cumbia Sonidera", "Reggaeton Latino Hits") and generic sleep, study and spa music projects are never picked. "Instrumental", "no vocals" means songs without lyrics. Energy, tempo and mood come from ReccoBeats, or for songs too new for it, from **Listen**: the app analyzes the 30-second Deezer preview with Meyda (MIT) and a small model fitted on 426 songs (energy r = 0.82). LRCLIB lyrics tell each song's language; when a song has no lyrics on file, the artist's country, scene and the language of their song titles stand in, and a playlist asked to be in one language leaves out songs whose clues all point elsewhere. Artists from a scene sung in another language (French rap on a plain "hip hop" request) rank lower unless something in the request points there, and a local scene (Detroit street rap, Monterrey cumbia) stays local. Tuned by what you approve and reject in that playlist, including steering away from the neighbourhood of artists you keep rejecting. It can start from anything you give it: genres, moods, artists, songs, or just years ("songs from 2016"), a language ("songs in Korean") or an occasion ("wedding hits everyone knows"), and it says when parts of a request pull in opposite directions.
-- **AI** recommendations: Google Gemini or OpenRouter with your own free key. Every suggestion is looked up in Deezer / Apple Music before it's added. Claude and ChatGPT subscriptions are a work in progress.
+## Recommendations
+
+- **Classic**: no AI and no keys. Described below.
+- **AI**: Google Gemini or OpenRouter with your own free key. Every suggestion is looked up on Deezer / Apple Music before it's added. Claude and ChatGPT subscriptions are a work in progress.
 - **Never suggest** lists hold real artists, not text: you search and pick the one you mean. Each is matched by its IDs on Deezer, MusicBrainz and Apple Music (linked through Wikidata and MusicBrainz, with duplicate profiles confirmed by recording codes), so other artists who share the name stay allowed.
-- Data lives in this browser (IndexedDB). Use Settings → Save backup to keep a copy or move devices.
 
-| File | What it does |
+## How Classic works
+
+**Reading the request.** A typed description (English or Spanish, and genre or language words in Japanese, Korean, Chinese, Russian, Arabic and Hindi script) is read with built-in rules: 2,000+ genre names (the MusicBrainz genre list), moods, tempo, years ("nothing after 2010"), languages, artists, songs and exclusions. Song lists pasted as "Title - Artist" are read as songs. It can start from anything: genres, moods, artists, songs, a year, a language or an occasion, and it says when parts of a request pull in opposite directions.
+
+**The scene map** (about 580 scenes, 11,000 artists):
+- *Curated core* (`data/scenes.js`, IDs in `data/scenes.ids.js`): 184 scenes, from emo, tango and gospel to plena panameña, deutschrap, Michigan street rap, Monterrey cumbia, jazz rap and cumbia rap, each with the artists who define it and the newer or deeper names that carry it, how scenes connect, and novelty acts to skip. Subgenre scenes need to be named, so a plain "rock" means the broad scenes; regional scenes answer a plain "hip hop" only when the request points there.
+- *Wide tier* (`data/scenes.wide.js`): 3,900 more artists Deezer relates to several of a scene's core artists. It widens the search but never decides which scenes a request is about.
+- *Auto tier* (`data/scenes.auto.js`): a small scene for 399 genres the core doesn't cover (acid house, psychobilly, cumbia peruana, chicano rap…), from the artists behind songs ListenBrainz listeners tagged with the genre. Used only when a request names the genre.
+
+**Shape of the playlist.** Starting points far apart (three songs from three different worlds) are built in parts, each with its share, so one world can't crowd out another. A fusion ("jazz-influenced hip hop") stays one playlist: a genre that names the mix leads, and songs whose artists carry both sounds rank first. Several named styles take turns. A starting song by an artist no service knows brings in their other songs and any artist named in their titles or credits; niche starting songs keep the picks niche.
+
+**Finding and checking songs.** Songs come from Deezer (related artists, artist radios, playlists) and ListenBrainz (similar artists, songs played together, songs tagged with a genre). Every artist is checked against MusicBrainz/ListenBrainz tags, Wikidata and Discogs styles so picks stay in the requested style. Release years come from first releases, since Deezer often gives a compilation's year; style-named compilation acts and generic sleep or spa music are never picked. Energy, tempo and mood come from ReccoBeats, or for songs too new for it, from **Listen**: the app analyzes the 30-second preview with Meyda (MIT) and a small model fitted on 426 songs (energy r = 0.82). LRCLIB lyrics tell each song's language; without lyrics, the artist's country, scene and song titles stand in. A local scene stays local, and artists from a scene sung in another language rank lower unless the request points there. Each playlist's approvals and rejections tune what comes next.
+
+## Repo layout
+
+GitHub Pages publishes `index.html`, `app/`, `data/` and `vendor/`. `dev/` stays in the repo and off the live site (`_config.yml`).
+
+| Path | What it is |
 |---|---|
-| `core.js` | Playlist rules: song states, capacity, operations, identity, invariants |
-| `catalog.js` | Deezer, Apple Music, MusicBrainz, ListenBrainz (similar artists and songs, genre tags), Discogs (styles), Wikidata (genres), ReccoBeats, LRCLIB (lyrics → language) |
-| `reader.js` | Classic's description reader (genres, styles, moods, BPM, years, languages, artists, songs, exclusions) |
-| `genres.js` | MusicBrainz genre list (CC0), so descriptions can name any genre |
-| `artists.js` | "Never suggest": finds the artist on Deezer, MusicBrainz and Apple Music, links the same artist across them, and matches songs by artist ID |
-| `scenes.js`, `scenes.ids.js` | The scene map Classic starts from, and the artists' Deezer IDs |
-| `scenes.wide.js` | The scene map's third tier: artists Deezer relates to several of a scene's core artists |
-| `tools/kbwide.js` | `node tools/kbwide.js` rebuilds `scenes.wide.js` from Deezer's related artists |
-| `scenes.auto.js` | The scene map's auto tier: one small scene per genre the curated core doesn't cover |
-| `tools/kbauto.js` | `node tools/kbauto.js` rebuilds `scenes.auto.js` from ListenBrainz genre tags and Deezer |
-| `listen.js` | Listen: energy, danceability, mood and tempo estimated from a song's preview |
+| `index.html` | The app's page |
+| `app/core.js` | Playlist rules: song states, capacity, operations, identity, invariants |
+| `app/catalog.js` | Deezer, Apple Music, MusicBrainz, ListenBrainz, Discogs, Wikidata, ReccoBeats, LRCLIB |
+| `app/reader.js` | Classic's description reader |
+| `app/artists.js` | "Never suggest": finds the artist on each service and matches songs by artist ID |
+| `app/engines.js` | Classic and AI recommendation engines |
+| `app/listen.js` | Listen: energy, danceability, mood and tempo estimated from a song's preview |
+| `app/migrate.js` | Moves Préndete 🔥 from the old single-playlist app |
+| `app/ui.js`, `app/views.js`, `app/main.js` | Interface, storage, jobs |
+| `data/genres.js` | MusicBrainz genre list (CC0) |
+| `data/scenes*.js` | The scene map: curated core, Deezer IDs, wide tier, auto tier |
+| `data/seed.json` | Préndete 🔥's saved songs, used once on first run |
 | `vendor/meyda.min.js` | Meyda 5.6.3 audio features (MIT) |
-| `engines.js` | Classic and AI recommendation engines |
-| `migrate.js` | Moves Préndete 🔥 from the old single-playlist app |
-| `ui.js`, `views.js`, `main.js` | Interface, storage, jobs |
-| `seed.json` | Préndete 🔥's saved songs, used once on first run |
-| `tests/core.test.js` | `node tests/core.test.js` checks the rules against the ruleset's acceptance tests |
-| `tests/reader.test.js` | `node tests/reader.test.js` checks the description reader |
-| `tests/style.test.js` | `node tests/style.test.js` checks Classic's genre matching |
-| `tests/robust.test.js` | `node tests/robust.test.js` checks junk input, damaged backups and old data, untrusted AI answers, and random operation sequences |
-| `tests/ban.test.js` | `node tests/ban.test.js` checks "Never suggest" matching: IDs decide, namesakes and partial names stay allowed |
-| `tests/listen.test.js` | `npm install meyda && node tests/listen.test.js` checks the preview analyzer |
+| `dev/tests/` | `node dev/tests/<name>.test.js`: core rules, reader, genre matching, robustness, "Never suggest", Listen (`npm install meyda` first) |
+| `dev/tools/kbwide.js` | `node dev/tools/kbwide.js` rebuilds the wide tier from Deezer's related artists |
+| `dev/tools/kbauto.js` | `node dev/tools/kbauto.js` rebuilds the auto tier from ListenBrainz genre tags and Deezer |

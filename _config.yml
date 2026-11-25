@@ -1,0 +1,5 @@
+# GitHub Pages publishes only the app (index.html, app/, data/, vendor/).
+# dev/ holds the tests and the tools that rebuild the scene map; it stays in the repo, off the live site.
+exclude:
+  - dev
+  - README.md

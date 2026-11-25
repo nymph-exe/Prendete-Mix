@@ -4,7 +4,7 @@
 (function (G) {
 "use strict";
 const Core = G.Core || require("./core.js");
-const expOf = ex => (ex === 1 || ex === 4 ? "explicit" : ex === 3 ? "clean" : "");
+const expOf = Core.expOf;
 function seedTrack(m) {
   const y = +m.y || null, iy = Core.isrcYear(m.isrc);
   return { id: m.id, dz: m.dz || (/^dz:/.test(m.id) ? +m.id.slice(3) : undefined), t: m.t, a: m.a, aid: m.aid || [], al: m.al || "", y: y && iy ? Math.min(y, iy) : y || iy,

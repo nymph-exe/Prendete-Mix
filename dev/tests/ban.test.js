@@ -1,6 +1,6 @@
 /* "Never suggest" matching: IDs decide, exact full names only where there's no ID. Offline. */
-const D = process.env.V3 || "..";
-const A = require(D + "/artists.js");
+const APP = __dirname + "/../../app", DATA = __dirname + "/../../data";
+const A = require(APP + "/artists.js");
 let pass = 0, fail = 0;
 const ok = (name, c, info) => { if (c) pass++; else { fail++; console.log("FAIL", name, info === undefined ? "" : JSON.stringify(info)); } };
 

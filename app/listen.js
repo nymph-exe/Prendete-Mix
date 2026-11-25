@@ -43,13 +43,9 @@ function estimate(d) {
   for (const [k, m] of Object.entries(MODEL)) { let y = m.b; KEYS.forEach((f, i) => { y += m.w[i] * ((d[f] - m.mu[i]) / (m.sd[i] || 1)); }); out[k] = +clamp(y).toFixed(3); }
   return out;
 }
-/* browser: fetch + decode a preview, downmix to mono 22,050 Hz (node, for tests: ffmpeg) */
+/* fetch + decode a preview, downmix to mono 22,050 Hz */
 async function fromUrl(url) {
   const AC = G.OfflineAudioContext || G.webkitOfflineAudioContext;
-  if (!AC && typeof process !== "undefined" && typeof require !== "undefined") { try { if (!G.Meyda) G.Meyda = require("meyda"); } catch { return null; }
-    const cp = require("child_process"); const b = Buffer.from(await (await fetch(url)).arrayBuffer());
-    const pcm = cp.execFileSync("ffmpeg", ["-v", "quiet", "-i", "pipe:0", "-ac", "1", "-ar", "22050", "-f", "f32le", "pipe:1"], { input: b, maxBuffer: 64 << 20 });
-    const x = new Float32Array(pcm.buffer, pcm.byteOffset, Math.floor(pcm.length / 4)); return x.length > 22050 * 8 ? estimate(describe(x, 22050)) : null; }
   if (!AC || !MeydaLib()) return null;
   const buf = await (await fetch(url)).arrayBuffer(); const ctx0 = new AC(1, 22050, 22050);
   const audio = await new Promise((res, rej) => { const p = ctx0.decodeAudioData(buf, res, rej); if (p && p.then) p.then(res, rej); });

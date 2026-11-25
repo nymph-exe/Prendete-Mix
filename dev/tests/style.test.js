@@ -1,6 +1,6 @@
 // Classic's genre matching: offline checks of tag similarity, named styles and the style gate.
-const D = process.env.V3 || "..";
-globalThis.Core = require(D + "/core.js"); globalThis.Catalog = require(D + "/catalog.js"); const E = require(D + "/engines.js");
+const APP = __dirname + "/../../app", DATA = __dirname + "/../../data";
+globalThis.Core = require(APP + "/core.js"); globalThis.Catalog = require(APP + "/catalog.js"); const E = require(APP + "/engines.js");
 let pass = 0, fail = 0; const ok = (name, c, got) => { c ? pass++ : fail++; console.log(c ? "ok  " : "FAIL", name, c ? "" : "→ got " + JSON.stringify(got)); };
 ok("same tag", E.tagSim("uk drill", "UK Drill") === 1);
 ok("narrower artist tag fits", E.tagSim("drill", "uk drill") >= .9);
@@ -19,7 +19,7 @@ ok("in-style artist passes", E.styleFit(2, S).wf >= .45);
 const S2 = { want: ["house"], broad: [], notS: ["edm"], taste: [], ref: .3, strict: true, info: true };
 ok("ruled-out style", E.styleFit(3, S2).no === true);
 // the scene map
-const SC = require(D + "/scenes.js"); globalThis.Scenes = SC;
+const SC = require(DATA + "/scenes.js"); globalThis.Scenes = SC;
 ok("scene map loads", Object.keys(SC.SCENES).length >= 80, Object.keys(SC.SCENES).length);
 ok("an artist belongs to its scene", SC.of("Peso Pluma").some(m => m.key === "corridos_tumbados"));
 ok("novelty acts are known", SC.novelty("Big Shaq") && !SC.novelty("Skepta"));
@@ -40,7 +40,7 @@ ok("bossa nova has its own scene", sc(["bossa nova"])[0] === "bossa_nova", sc(["
 ok("lofi still finds lofi beats", JSON.stringify(sc(["lofi"])) === '["lofi_beats"]');
 ok("crowd-pleasers with no style: mainstream scenes", [...E.scenesFor(P1([], "wedding hits", true), { want: [], broad: [], notS: [], taste: [], strict: false }).keys()].includes("pop_2010s"));
 /* the larger map (24 Nov 2026): 176 scenes, a third tier, every scene tag a style */
-const SCN = require(D + "/scenes.js"); const Rd = require(D + "/reader.js");
+const SCN = require(DATA + "/scenes.js"); const Rd = require(APP + "/reader.js");
 const rsc = (text, langs = []) => { const t = Rd.read(text).traits; return sc([...(t.keywords || []), ...(t.genres || [])], langs, text); };
 ok("the map has 170+ scenes", Object.keys(SCN.SCENES).length >= 170, Object.keys(SCN.SCENES).length);
 ok("every scene tag is a style a request can name", Object.values(SCN.SCENES).flatMap(x => x.tags).every(t => E.wantStyles({ keywords: [t] }).length));
@@ -56,18 +56,18 @@ const gl = globalThis.Catalog.guessLang; ok("a title or name in another language
 /* far-apart starting points are built in parts (25 Nov 2026) */
 const mkPl = (dir, seeds = []) => { const T = new Map(seeds.map(t => [t.id, t])); const pl = globalThis.Core.createPlaylist({ name: "t", method: "NATURAL_LANGUAGE", direction: Object.assign({ text: "", refs: [], artists: [], exclude: { artists: [], songs: [] }, form: {} }, dir), capacity: 60 });
   if (seeds.length) { globalThis.Core.appendCandidates(pl, seeds, { batchId: "s" }, id => T.get(id)); globalThis.Core.approve(pl, seeds.map(t => t.id)); } return { latest: () => pl, getTrack: id => T.get(id) }; };
-const SID = n => require(D + "/scenes.ids.js")[n][0];
+const SID = n => require(DATA + "/scenes.ids.js")[n][0];
 const tk = (id, t, aid) => ({ id, t, a: "x", aid: [aid], dz: id });
-const three = E._partsOf(mkPl({}, [tk("dz:1", "ULTIMATE RAGE", SID("HUSSVRX")), tk("dz:2", "Pégale Papá", SID("Los Plebeyos")), tk("dz:3", "Grace", SID("42 Dugg"))]));
+const three = E.partsOf(mkPl({}, [tk("dz:1", "ULTIMATE RAGE", SID("HUSSVRX")), tk("dz:2", "Pégale Papá", SID("Los Plebeyos")), tk("dz:3", "Grace", SID("42 Dugg"))]));
 ok("three songs from three worlds: three parts", three && three.length === 3, three && three.map(p => p.label));
-const one = E._partsOf(mkPl({}, [tk("dz:4", "a", SID("Bad Bunny")), tk("dz:5", "b", SID("Feid")), tk("dz:6", "c", SID("Young Miko"))]));
+const one = E.partsOf(mkPl({}, [tk("dz:4", "a", SID("Bad Bunny")), tk("dz:5", "b", SID("Feid")), tk("dz:6", "c", SID("Young Miko"))]));
 ok("three reggaeton songs: one playlist, no parts", one === null, one && one.map(p => p.label));
-const st3 = E._partsOf(mkPl({ form: { keywords: ["aggressive phonk", "michigan street rap", "monterrey cumbia"], genres: [{ id: 71, name: "Cumbia" }, { id: 116, name: "Rap/Hip Hop" }] } }));
+const st3 = E.partsOf(mkPl({ form: { keywords: ["aggressive phonk", "michigan street rap", "monterrey cumbia"], genres: [{ id: 71, name: "Cumbia" }, { id: 116, name: "Rap/Hip Hop" }] } }));
 ok("three far-apart styles: three parts (the reader's genres stay with their styles)", st3 && st3.length === 3, st3 && st3.map(p => p.label + ":" + p.genres.map(g => g.name)));
-const st1 = E._partsOf(mkPl({ form: { keywords: ["reggaeton", "trap latino"], genres: [{ id: 122, name: "Reggaeton" }] } }));
+const st1 = E.partsOf(mkPl({ form: { keywords: ["reggaeton", "trap latino"], genres: [{ id: 122, name: "Reggaeton" }] } }));
 ok("reggaeton and trap latino stay one playlist", st1 === null, st1 && st1.map(p => p.label));
 const jz = { keywords: ["hip hop", "jazz"], genres: [{ id: 116, name: "Rap/Hip Hop" }, { id: 129, name: "Jazz" }] };
-const fu = E._partsOf(mkPl({ text: "jazz-influenced hip hop", form: jz })), bl = E._partsOf(mkPl({ text: "a blend of jazz and hip hop", form: jz }));
+const fu = E.partsOf(mkPl({ text: "jazz-influenced hip hop", form: jz })), bl = E.partsOf(mkPl({ text: "a blend of jazz and hip hop", form: jz }));
 ok("a fusion (“jazz-influenced hip hop”) stays one playlist; a blend of two styles is built in parts", fu === null && bl && bl.length === 2, [fu, bl && bl.map(p => p.label)]);
-const PS = E._pseudo; ok("compilation acts named after a style are not artists", ["Cumbia Sonidera", "Reggaeton Latino Hits", "Various Artists", "Exitos Reggaeton", "Corridos Tumbados Mix"].every(PS) && !["Banda MS", "Daft Punk", "Gipsy Kings", "Pop Smoke", "Celso Piña", "Soul II Soul", "Deep Purple"].some(PS));
+const PS = E.pseudoArtist; ok("compilation acts named after a style are not artists", ["Cumbia Sonidera", "Reggaeton Latino Hits", "Various Artists", "Exitos Reggaeton", "Corridos Tumbados Mix"].every(PS) && !["Banda MS", "Daft Punk", "Gipsy Kings", "Pop Smoke", "Celso Piña", "Soul II Soul", "Deep Purple"].some(PS));
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

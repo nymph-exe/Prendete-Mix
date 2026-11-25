@@ -3,11 +3,11 @@
    their Deezer IDs. A genre becomes a scene when 6+ of its artists are found on Deezer.
    Auto scenes are only used when a request names their genre; they never outrank the hand-written map.
    Answers are cached (MIXER_AUTO_CACHE, or a file in the system temp folder) so reruns resume where they stopped.
-   Run from anywhere: node tools/kbauto.js [limit] */
-const V = __dirname + "/..";
-globalThis.Core = require(V + "/core.js"); const Cat = require(V + "/catalog.js");
-const SC = require(V + "/scenes.js"); const E = require(V + "/engines.js"); const IDS = require(V + "/scenes.ids.js");
-const GL = (() => { const g = require(V + "/genres.js"); const L = g.L || g.LIST || g; return Array.isArray(L) ? L : Object.values(L).find(Array.isArray); })();
+   Run from anywhere: node dev/tools/kbauto.js [limit] */
+const APP = __dirname + "/../../app", DATA = __dirname + "/../../data";
+globalThis.Core = require(APP + "/core.js"); const Cat = require(APP + "/catalog.js");
+const SC = require(DATA + "/scenes.js"); const E = require(APP + "/engines.js"); const IDS = require(DATA + "/scenes.ids.js");
+const GL = (() => { const g = require(DATA + "/genres.js"); const L = g.L || g.LIST || g; return Array.isArray(L) ? L : Object.values(L).find(Array.isArray); })();
 const fs = require("fs"), path = require("path"); const CF = process.env.MIXER_AUTO_CACHE || path.join(require("os").tmpdir(), "mixer-auto.json");
 const cache = fs.existsSync(CF) ? JSON.parse(fs.readFileSync(CF)) : { tag: {}, meta: {}, dz: {} };
 let dirty = 0; const save = (force) => { if (++dirty % 25 && !force) return; fs.writeFileSync(CF, JSON.stringify(cache)); };
@@ -39,7 +39,7 @@ const mnorm = s => SC.norm(s).replace(/\s+/g, "");
   save(true);
   /* 3. the artists behind 2+ songs of each genre, found on Deezer */
   const per = new Map(); const names = new Set();
-  for (const g of rich) { const c = new Map(), ys = []; for (const r of recsOf(g)) { const v = cache.meta[r]; if (!v || !v[0] || SC.novelty(v[0]) || E._pseudo(v[0])) continue; c.set(v[0], (c.get(v[0]) || 0) + 1); if (v[1]) ys.push(v[1]); }
+  for (const g of rich) { const c = new Map(), ys = []; for (const r of recsOf(g)) { const v = cache.meta[r]; if (!v || !v[0] || SC.novelty(v[0]) || E.pseudoArtist(v[0])) continue; c.set(v[0], (c.get(v[0]) || 0) + 1); if (v[1]) ys.push(v[1]); }
     const top = [...c].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 24); per.set(g, { top, ys }); top.forEach(([n]) => names.add(n)); }
   const look = [...names].filter(n => !(n in cache.dz)); console.log(`${names.size} artists, ${look.length} to find on Deezer`);
   let j = 0; await Promise.all(Array.from({ length: 16 }, async () => { while (look.length) { const n = look.shift(); j++;
@@ -60,6 +60,6 @@ const mnorm = s => SC.norm(s).replace(/\s+/g, "");
     made++; }
   const out = `/* MIXER scene map, auto tier (built ${new Date().toISOString().slice(0, 10)} by tools/kbauto.js): one scene per genre the hand-written map doesn't cover,\n   from songs listeners tagged with it on ListenBrainz. Used only when a request names the genre. key → {name, tags, era, core, next, near}; artists are [deezer id, fans, name] */\n` +
     `(function (G) { const AUTO = ${JSON.stringify(AUTO)};\n  if (typeof module !== "undefined") module.exports = AUTO; else G.SCENE_AUTO = AUTO; })(typeof window !== "undefined" ? window : globalThis);\n`;
-  fs.writeFileSync(V + "/scenes.auto.js", out);
+  fs.writeFileSync(DATA + "/scenes.auto.js", out);
   console.log(`${made} auto scenes, ${Object.values(AUTO).reduce((s, a) => s + a.core.length + a.next.length, 0)} artist places, ${Math.round(out.length / 1024)} KB`);
 })().catch(e => { console.error(e); process.exit(1); });

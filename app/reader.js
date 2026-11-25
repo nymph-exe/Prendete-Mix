@@ -93,10 +93,10 @@ const AMBIG = new Set(["house", "garage", "swing", "march", "beat", "bass", "noi
 const CLEAR = new Set(["house", "garage", "swing", "christmas", "holiday", "comedy", "lounge", "hardcore", "cabaret", "opera", "industrial", "folklore", "cuarteto", "axé", "glitch", "meditation"]);
 const MUSICW = /^(songs?|music|tunes|tracks|hits|playlist|canciones|musica|cancion|temas|classics|carols)$/;
 function genreIndex() {
-  if (GKEY) return GKEY; const L = (typeof globalThis !== "undefined" && globalThis.GENRES) || (typeof require !== "undefined" ? (() => { try { return require("./genres.js"); } catch { return []; } })() : []);
+  if (GKEY) return GKEY; const L = (typeof globalThis !== "undefined" && globalThis.GENRES) || (typeof require !== "undefined" ? (() => { try { return require("../data/genres.js"); } catch { return []; } })() : []);
   GKEY = new Map(); for (const g of L) { const k = gk(g); if (k.length >= 3 && !GKEY.has(k)) GKEY.set(k, g); }
   /* the scene map's tags are style words too ("deutschrap", "plena", "show tunes") */
-  const SCN = (typeof globalThis !== "undefined" && globalThis.Scenes) || (typeof require !== "undefined" ? (() => { try { return require("./scenes.js"); } catch { return null; } })() : null);
+  const SCN = (typeof globalThis !== "undefined" && globalThis.Scenes) || (typeof require !== "undefined" ? (() => { try { return require("../data/scenes.js"); } catch { return null; } })() : null);
   /* (phrases with "en español" are left to the Spanish rewrites above, which also keep the language) */
   if (SCN) for (const sc of Object.values(SCN.SCENES)) for (const t of sc.tags) { const k = gk(t); if (k.length >= 3 && !GKEY.has(k) && !/ en espa(n|ñ)ol$/.test(t)) { const sing = gk(String(t).split(/\s+/).map(w => (w.length > 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w)).join(" ")); if (!GKEY.has(sing)) GKEY.set(k, t); } }
   return GKEY;

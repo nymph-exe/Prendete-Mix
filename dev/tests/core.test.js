@@ -1,5 +1,6 @@
 // Acceptance tests from the Master Ruleset (Section 24) that apply to core logic. Hypothetical fixtures only.
-const C = require("../core.js");
+const APP = __dirname + "/../../app", DATA = __dirname + "/../../data";
+const C = require(__dirname + "/../../app/core.js");
 let pass = 0, fail = 0;
 const T = (id, name, fn) => { try { fn(); pass++; console.log("ok  ", id, name); } catch (e) { fail++; console.log("FAIL", id, name, "->", e.message); } };
 const eq = (a, b, m) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error((m || "") + " expected " + JSON.stringify(b) + " got " + JSON.stringify(a)); };

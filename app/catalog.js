@@ -14,7 +14,7 @@ function memo(key, max = 6000) {
   return { get: k => load().get(k), set: (k, v) => { load().delete(k); load().set(k, v); save(); } };
 }
 const LANGS = memo("mixer-langs"), YEARS = memo("mixer-years"), MBIDS = memo("mixer-mbids");
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleep = Core.sleep;
 const https = u => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
 function pacer(perSec) { let next = 0; const gap = 1000 / perSec; return async fn => { const now = Date.now(); const at = Math.max(now, next); next = at + gap; if (at > now) await sleep(at - now); return fn(); }; }
 function limiter(perSec) { let q = Promise.resolve(), last = 0; const gap = 1000 / perSec; return fn => { const p = q.then(async () => { const w = last + gap - Date.now(); if (w > 0) await sleep(w); last = Date.now(); return fn(); }); q = p.catch(() => {}); return p; }; }
@@ -43,7 +43,7 @@ function match(title, artist, x) {
   if (exactA) { const a = sq(nt), b = sq(ng); const L = Math.min(a.length, b.length); if (L >= 5 && lev(a, b) <= (L >= 11 ? 2 : 1)) return true; }
   return false;
 }
-const expOf = ex => (ex === 1 || ex === 4 ? "explicit" : ex === 3 ? "clean" : "");
+const expOf = Core.expOf;
 
 /* ---------- Deezer ---------- */
 let jpN = 0; const dzLimit = pacer(8); /* Deezer allows 50 requests per 5 s */
@@ -283,8 +283,9 @@ async function complete(t) { if (t.dz && !t.full) { try { const f = await Deezer
 
 /* ---------- LRCLIB lyrics → language ---------- */
 /* LRCLIB is a free community service: keep a gentle pace, and when it says "slow down" (429) every lyrics request pauses */
-/* the same gentle start rate, but a slow answer no longer holds up the requests behind it (they used to run one at a time) */
-const lrLimit = pacer(4), lrsLimit = pacer(2); let lrPause = 0;
+/* LRCLIB turns faster callers away (429): at 4 a second, about 1 lookup in 7 came back empty after its retries.
+   1.5 a second (search 0.75) finds them all and takes about as long, because fewer requests have to wait and retry. */
+const lrLimit = pacer(1.5), lrsLimit = pacer(.75); let lrPause = 0;
 async function lrGet(url, lim) {
   for (let i = 0; ; i++) {
     const w = lrPause - Date.now(); if (w > 0) await sleep(w);
