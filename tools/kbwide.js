@@ -4,7 +4,7 @@
    Deezer answers are cached (MIXER_CACHE, or a file in the system temp folder) so reruns are quick. */
 const V = __dirname + "/..";
 globalThis.Core = require(V + "/core.js"); const Cat = require(V + "/catalog.js");
-const SC = require(V + "/scenes.js"); const IDS = require(V + "/scenes.ids.js");
+const SC = require(V + "/scenes.js"); const PSEUDO = require(V + "/engines.js")._pseudo; const IDS = require(V + "/scenes.ids.js");
 const fs = require("fs"); const CF = process.env.MIXER_CACHE || require("path").join(require("os").tmpdir(), "mixer-related.json");
 const cache = fs.existsSync(CF) ? JSON.parse(fs.readFileSync(CF)) : {};
 (async () => {
@@ -24,7 +24,7 @@ const cache = fs.existsSync(CF) ? JSON.parse(fs.readFileSync(CF)) : {};
     const need = core.length >= 18 ? 3 : 2;
     const cnt = new Map();
     for (const id of core) for (const [rid, name, fans] of cache[id] || []) { if (inMap.has(rid)) continue; const c = cnt.get(rid) || { n: 0, name, fans }; c.n++; cnt.set(rid, c); }
-    for (const [rid, c] of cnt) if (c.n >= need && c.fans >= 2000 && !SC.novelty(c.name)) { const l = cand.get(rid) || []; l.push({ key: sc.key, n: c.n, need, name: c.name, fans: c.fans }); cand.set(rid, l); }
+    for (const [rid, c] of cnt) if (c.n >= need && c.fans >= 2000 && !SC.novelty(c.name) && !PSEUDO(c.name)) { const l = cand.get(rid) || []; l.push({ key: sc.key, n: c.n, need, name: c.name, fans: c.fans }); cand.set(rid, l); }
   }
   /* an artist goes in the (at most 3) scenes it is most strongly linked to */
   const per = {}; for (const [rid, l] of cand) l.sort((a, b) => b.n / b.need - a.n / a.need).slice(0, 3).forEach(x => (per[x.key] = per[x.key] || []).push([rid, x]));

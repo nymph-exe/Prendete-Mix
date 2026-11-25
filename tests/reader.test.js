@@ -34,4 +34,9 @@ r = R.read("Blinding Lights - The Weeknd but no Drake"); eq("a clause after the 
 eq("a year range isn't a song", R.read("songs from 2010 - 2015").references, []); eq("a dash in plain words isn't a song", R.read("chill - relaxing music for studying").references, []);
 eq("“genre - mood” isn't a song", R.read("reggaeton - perreo duro para el gym").references, []);
 r = R.read("aggressive phonk, Michigan street rap and Monterrey cumbia"); eq("regional styles keep their region", r.traits.keywords.slice().sort(), ["aggressive phonk", "michigan street rap", "monterrey cumbia"]);
+/* other scripts and negated year limits (25 Nov 2026) */
+{ const r1 = R.read("日本のシティポップ"), r2 = R.read("케이팝 발라드"), r3 = R.read("русский рэп");
+  eq("genre words in Japanese, Korean and Russian script are read", [r1.traits.keywords.includes("city pop"), r1.traits.languages.includes("ja"), r2.traits.keywords.includes("k-pop"), r3.traits.keywords.includes("hip hop"), r3.traits.languages.includes("ru")], [true, true, true, true, true]); }
+{ const e = s0 => JSON.stringify(R.read(s0).traits.era);
+  eq("“nothing after 2010” is up to 2010; “nothing older than 2015” is 2015 on", [e("hip hop, nothing after 2010"), e("nada después de 2010"), e("nothing older than 2015"), e("pre-2010 rap"), e("2005 or earlier")], ["[1900,2010]", "[1900,2010]", "[2015," + new Date().getFullYear() + "]", "[1900,2010]", "[1900,2005]"]); }
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

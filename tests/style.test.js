@@ -66,4 +66,8 @@ const st3 = E._partsOf(mkPl({ form: { keywords: ["aggressive phonk", "michigan s
 ok("three far-apart styles: three parts (the reader's genres stay with their styles)", st3 && st3.length === 3, st3 && st3.map(p => p.label + ":" + p.genres.map(g => g.name)));
 const st1 = E._partsOf(mkPl({ form: { keywords: ["reggaeton", "trap latino"], genres: [{ id: 122, name: "Reggaeton" }] } }));
 ok("reggaeton and trap latino stay one playlist", st1 === null, st1 && st1.map(p => p.label));
+const jz = { keywords: ["hip hop", "jazz"], genres: [{ id: 116, name: "Rap/Hip Hop" }, { id: 129, name: "Jazz" }] };
+const fu = E._partsOf(mkPl({ text: "jazz-influenced hip hop", form: jz })), bl = E._partsOf(mkPl({ text: "a blend of jazz and hip hop", form: jz }));
+ok("a fusion (“jazz-influenced hip hop”) stays one playlist; a blend of two styles is built in parts", fu === null && bl && bl.length === 2, [fu, bl && bl.map(p => p.label)]);
+const PS = E._pseudo; ok("compilation acts named after a style are not artists", ["Cumbia Sonidera", "Reggaeton Latino Hits", "Various Artists", "Exitos Reggaeton", "Corridos Tumbados Mix"].every(PS) && !["Banda MS", "Daft Punk", "Gipsy Kings", "Pop Smoke", "Celso Piña", "Soul II Soul", "Deep Purple"].some(PS));
 console.log(`\n${pass} passed, ${fail} failed`); if (fail) process.exitCode = 1;

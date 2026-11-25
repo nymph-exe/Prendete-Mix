@@ -28,7 +28,9 @@ E.ART.set(9001, { area: "United States" }); E.ART.set(9002, { area: "Mexico" });
 const RL = { langs: ["es"], notLangs: [] };
 ok("language: English title + US artist is out of a Spanish playlist", E.langVerdict({ aid: [9001], lang: { src: "title", main: "en", langs: ["en"] } }, RL) === "no");
 ok("language: a US artist with a Spanish title stays (Becky G)", E.langVerdict({ aid: [9001], lang: { src: "title", main: "es", langs: ["es"] } }, RL) === "ok");
-ok("language: no lyrics, US artist: ranked lower, not out", E.langVerdict({ aid: [9001], lang: { src: "unknown", main: null, langs: [] } }, RL) === "doubt");
+ok("language: not looked up yet, US artist: a doubt, not out", E.langVerdict({ aid: [9001], lang: null }, RL) === "doubt");
+ok("language: looked up, no lyrics, US artist: out of a playlist asked to be in Spanish", E.langVerdict({ aid: [9001], lang: { src: "unknown", main: null, langs: [] } }, RL) === "no");
+ok("language: an instrumental isn't “in Spanish”", E.langVerdict({ aid: [9002], lang: { src: "instrumental", main: null, langs: [] } }, RL) === "no" && E.langVerdict({ aid: [9002], lang: { src: "instrumental" } }, { langs: [], notLangs: ["en"] }) === "ok");
 ok("language: no lyrics, Mexican artist: unknown", E.langVerdict({ aid: [9002] }, RL) === "unknown");
 
 /* Classic check: session-style credits and background-music acts */
@@ -83,5 +85,11 @@ const a = { provider: "gemini", key: "k", model: "auto", models: [{ id: "gemini-
         () => Core.addMandatory(pl, [pick(ids)], get), () => Core.fillCommit(pl, [{ id: pick(ids) }, { id: pick(st("PENDING").concat(["x"])) }], get), () => Core.editDirection(pl, {}, { reset: rnd() < .1 })]);
       try { op(); Core.validate(pl); } catch (e) { if (!(e instanceof Core.OpError) || e.code === "INVARIANT") broken++; pl = before; } } }
   ok("random operations never break a playlist", broken === 0, broken);
-  console.log(`\n${pass} passed, ${fail} failed`); process.exitCode = fail ? 1 : 0;
+  /* titles and lyrics as language clues (25 Nov 2026) */
+{ const C = globalThis.Catalog || require("../catalog.js"), g = C.guessLang;
+  ok("Spanish titles are read from their spelling and words; Portuguese ones stay Portuguese", g("Tití Me Preguntó") === "es" && g("Pégale Papá") === "es" && g("Tu Falta De Querer") === "es" && g("Ai Se Eu Te Pego") === "pt" && g("Garota de Ipanema") === "pt" && g("Shape of You") === "en", [g("Tití Me Preguntó"), g("Ai Se Eu Te Pego"), g("Garota de Ipanema")]);
+  const fr = C.detectLang("Je ne sais pas ce que tu veux de moi, tu me dis que tu es là, mais je ne te vois pas. Dans la rue les gens me regardent, je suis seul ce soir, on se voit demain, laisse-moi tranquille, je te dis que c'est fini, que la vie me fait mal, que je te donne tout");
+  const mix = C.detectLang("Baby I love you, tú eres mi vida, I just wanna be with you tonight, no quiero nada más que estar contigo, you know I need you baby, dime que me quieres, eres todo para mí, all night long");
+  ok("French lyrics aren't also “Spanish” because of shared small words; real bilingual lyrics keep both", fr && fr.langs.join() === "fr" && mix && mix.langs.includes("en") && mix.langs.includes("es"), [fr, mix]); }
+console.log(`\n${pass} passed, ${fail} failed`); process.exitCode = fail ? 1 : 0;
 })();

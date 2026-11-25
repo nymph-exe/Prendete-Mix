@@ -19,7 +19,7 @@ const GENRES = [
   [/\b(christian|gospel|worship|cristiana?|alabanza)\b/, "Christian"], [/\b(soundtracks?|film music|movie music|game music|ost)\b/, "Films/Games"]
 ];
 const MOODS = [
-  [/\b(part(y|ies)|fiesta|pregame|pre-game|turn up|club|perreo|rumba|jangueo|janguear|bellaqueo|antro|discoteca|carrete|parrandas?|vacil[oó]n)\b/, "Party"],
+  [/\b((?<!dinner |cocktail |tea |garden |book |slumber |pajama |pijama |sleepover )part(y|ies)|(?<!cena |cena de )fiesta|pregame|pre-game|turn up|club|perreo|rumba|jangueo|janguear|bellaqueo|antro|discoteca|carrete|parrandas?|vacil[oó]n)\b/, "Party"],
   [/\b(hype|hyped|pump(ed)? up|intense|aggressive|bangers?|turnt|hard[- ]hitting|motivat\w*)\b/, "Hype"],
   [/\b(workout|gym|training|running|cardio|entreno|entrenar|ejercicio|correr)\b/, "Workout"],
   [/\b(chill|chilling|relax\w*|calm|laid[- ]back|lo-?fi|tranquil[oa]|easy listening|unwind|sunday morning)\b/, "Chill"],
@@ -167,7 +167,13 @@ function read(text) {
   const ES_G = [[/\brock alternativo\b/g, "alternative rock"], [/\brock(?= en espa(n|ñ)ol\b)/g, "latin rock"], [/\b(rock latino|rock nacional)\b/g, "latin rock"], [/\brock cl(a|á)sico\b/g, "classic rock"], [/\bpop latino\b/g, "latin pop"],
     [/\bpop alternativo\b/g, "alternative pop"], [/\bm(u|ú)sica electr(o|ó)nica\b/g, "electronic"], [/\bindie latino\b/g, "latin alternative"], [/\bindie(?= en espa(n|ñ)ol\b)/g, "latin alternative"], [/\bbaladas? rom(a|á)nticas?\b/g, "latin ballad"],
     [/\b(hip ?hop|rap) latino\b/g, "latin hip hop"], [/\b(hip ?hop|rap)(?= en espa(n|ñ)ol\b)/g, "latin hip hop"]];
-  const esg = s0 => ES_G.reduce((s1, [re, to]) => s1.replace(new RegExp(re.source, "gi"), to), s0);
+  /* genre and language words in other scripts, in the English form the genre list uses ("日本のシティポップ" → "japanese city pop") */
+  const FX = [[/シティ・?ポップ/g, " city pop "], [/アニソン|アニメソング/g, " anime "], [/ボカロ|ボーカロイド/g, " vocaloid "], [/ヒップホップ/g, " hip hop "], [/ジャズ/g, " jazz "], [/ロック/g, " rock "], [/演歌/g, " enka "], [/ポップ/g, " pop "], [/日本語/g, " in japanese "], [/日本の?/g, " japanese "], [/洋楽/g, " western "], [/邦楽/g, " japanese "],
+    [/케이팝|케이 팝/g, " k-pop "], [/힙합/g, " hip hop "], [/발라드/g, " ballad "], [/트로트/g, " trot "], [/재즈/g, " jazz "], [/인디/g, " indie "], [/한국어/g, " in korean "], [/한국/g, " korean "],
+    [/嘻哈|饒舌|说唱|說唱/g, " hip hop "], [/摇滚|搖滾/g, " rock "], [/爵士/g, " jazz "], [/民谣|民謠/g, " folk "], [/华语流行|華語流行|國語流行/g, " mandopop "], [/粤语|粵語/g, " cantopop "], [/中文|华语|華語/g, " in chinese "], [/流行/g, " pop "],
+    [/рэп|хип-?хоп/gi, " hip hop "], [/рок/gi, " rock "], [/джаз/gi, " jazz "], [/поп/gi, " pop "], [/на русском|русск\S*/gi, " in russian "],
+    [/موسيقى عربية|عربي/g, " arabic pop "], [/راب/g, " hip hop "], [/बॉलीवुड/g, " bollywood "], [/हिंदी|हिन्दी/g, " in hindi "]];
+  const esg = s0 => FX.reduce((s1, [re, to]) => s1.replace(re, to), ES_G.reduce((s1, [re, to]) => s1.replace(new RegExp(re.source, "gi"), to), s0)).replace(/  +/g, " ").trim();
   /* holiday music in any wording becomes the one genre name the catalog knows: "christmas music" */
   const raw = esg(String(text || "")).replace(/\b(m[uú]sica|canciones|villancicos?|temas)\s+(de\s+)?(navidad(es)?|navide(n|ñ)[oa]s?)\b/gi, "christmas music")
     .replace(/\b(christmas|holiday|x-?mas)\s+(songs?|music|tunes|hits|carols|classics|playlist)\b/gi, (m, a, b) => (/^(hits|classics)$/i.test(b) ? "christmas music " + b : "christmas music")).replace(/\b(navidad(es)?|navide(n|ñ)[oa]s?|x-?mas)\b/gi, "christmas music").replace(/\b(la|una|las|pa la|pa' la)\s+disco(teca)?s?\b/gi, "$1 fiesta").replace(/\bdiscotecas?\b/gi, "fiesta"); /* "Title - Artist, Artist" lists, the way people paste songs: each title with its artists. Their words aren't styles ("ULTIMATE RAGE" is a song, not rage) */
@@ -204,8 +210,11 @@ function read(text) {
   const yr = [];
   for (const x of hits(low, /\b((?:19|20)\d{2})\s*(?:-|–|to|a|hasta|through|thru|al|y)\s*((?:19|20)\d{2})\b/, cls)) if (!x.neg) yr.push([+x.m[1], +x.m[2]]);
   if (!yr.length) {
-    for (const x of hits(low, /\b(from|since|desde|after|despues de|post|starting|a partir de)\s*((?:19|20)\d{2})\b(\s*(?:on|onwards?|and (?:later|after|up)|forward|till now|to now|to today|en adelante|para aca|hasta hoy|hasta ahora|\+))?/, cls)) if (!x.neg) yr.push(x.m[1] === "from" && !x.m[3] ? [+x.m[2], +x.m[2]] : [+x.m[2], CUR]);
-    for (const x of hits(low, /\b(?:before|until|up to|antes de|hasta|pre)\s*((?:19|20)\d{2})\b/, cls)) if (!x.neg) yr.push([1900, +x.m[1]]);
+    /* "after 2010" is 2010 on; "nothing after 2010" is up to 2010 (and the other way round for "before") */
+    for (const x of hits(low, /\b(from|since|desde|after|despues de|post-?|starting|a partir de|newer than|more recent than|later than|mas recientes? que|mas nuevas? que)\s*((?:19|20)\d{2})\b(\s*(?:on|onwards?|and (?:later|after|up)|forward|till now|to now|to today|en adelante|para aca|hasta hoy|hasta ahora|\+))?/, cls)) {
+      if (x.neg) { if (!/^(from|since|desde|starting|a partir de)$/.test(x.m[1])) yr.push([1900, +x.m[2]]); continue; } yr.push(x.m[1] === "from" && !x.m[3] ? [+x.m[2], +x.m[2]] : [+x.m[2], CUR]); }
+    for (const x of hits(low, /\b(?:before|until|up to|antes de|hasta|pre-?|older than|earlier than|no later than|mas viejas? que|mas antiguas? que)\s*((?:19|20)\d{2})\b/, cls)) yr.push(x.neg ? [+x.m[1], CUR] : [1900, +x.m[1]]);
+    for (const x of hits(low, /\b((?:19|20)\d{2})\s*(?:or|and|o|y)\s*(earlier|before|older|antes|later|after|newer|despues|mas tarde)\b/, cls)) if (!x.neg) yr.push(/earlier|before|older|antes/.test(x.m[2]) ? [1900, +x.m[1]] : [+x.m[1], CUR]);
     for (const x of hits(low, /\b(early|late|mid|principios de los|finales de los|mediados de los)?\s*(?:the |los |la decada de los )?((?:19|20)?\d0)'?s?\b(?=s|'s|\s|$|,)/, cls)) {
       const t = x.m[0]; if (!/s\b|'s|los |decada/.test(t + low.slice(x.i + t.length, x.i + t.length + 2))) continue; if (x.neg) continue;
       let d = +x.m[2]; if (d < 100) d += d >= 30 ? 1900 : 2000; if (d < 1900 || d > CUR) continue;

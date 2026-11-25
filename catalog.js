@@ -262,7 +262,7 @@ const ReccoBeats = {
       const [f, t] = await Promise.all([
         rbLimit(() => getJSON(`https://api.reccobeats.com/v1/audio-features?ids=${ids}`)).catch(() => null),
         rbLimit(() => getJSON(`https://api.reccobeats.com/v1/track?ids=${ids}`)).catch(() => null)]);
-      for (const x of (f && f.content) || []) if (x.isrc) out.set(x.isrc, Object.assign(out.get(x.isrc) || {}, { e: x.energy, d: x.danceability, v: x.valence, bpm: x.tempo, ac: x.acousticness, sp: https(x.href) }));
+      for (const x of (f && f.content) || []) if (x.isrc) out.set(x.isrc, Object.assign(out.get(x.isrc) || {}, { e: x.energy, d: x.danceability, v: x.valence, bpm: x.tempo, ac: x.acousticness, ins: x.instrumentalness, sp: https(x.href) }));
       for (const x of (t && t.content) || []) if (x.isrc) out.set(x.isrc, Object.assign(out.get(x.isrc) || {}, { pop: x.popularity, sp: https(x.href) || (out.get(x.isrc) || {}).sp }));
     }
     return out;
@@ -283,7 +283,8 @@ async function complete(t) { if (t.dz && !t.full) { try { const f = await Deezer
 
 /* ---------- LRCLIB lyrics → language ---------- */
 /* LRCLIB is a free community service: keep a gentle pace, and when it says "slow down" (429) every lyrics request pauses */
-const lrLimit = limiter(4), lrsLimit = limiter(2); let lrPause = 0;
+/* the same gentle start rate, but a slow answer no longer holds up the requests behind it (they used to run one at a time) */
+const lrLimit = pacer(4), lrsLimit = pacer(2); let lrPause = 0;
 async function lrGet(url, lim) {
   for (let i = 0; ; i++) {
     const w = lrPause - Date.now(); if (w > 0) await sleep(w);
@@ -322,12 +323,14 @@ function detectLang(text) {
   const sc = { ko: cnt(/[\uac00-\ud7af\u1100-\u11ff]/g), kana: cnt(/[\u3040-\u30ff]/g), han: cnt(/[\u4e00-\u9fff]/g), ru: cnt(/[\u0400-\u04ff]/g), ar: cnt(/[\u0600-\u06ff]/g), hi: cnt(/[\u0900-\u097f]/g) };
   const latin = cnt(/[a-zà-ÿ]/gi); const share = {};
   if (sc.ko) share.ko = sc.ko * 2.5; if (sc.kana) share.ja = (sc.kana + sc.han) * 2; else if (sc.han) share.zh = sc.han * 2.5; ["ru", "ar", "hi"].forEach(k => { if (sc[k]) share[k] = sc[k]; });
-  const hits = {}; let sum = 0;
-  for (const w of s.toLowerCase().replace(/[’`]/g, "'").match(/[a-zà-ÿœç']+/g) || []) { const ls = SWI.get(w); if (!ls) continue; ls.forEach(l => (hits[l] = (hits[l] || 0) + 1 / ls.length)); sum++; }
+  const hits = {}, uniq = {}; let sum = 0, usum = 0;
+  for (const w of s.toLowerCase().replace(/[’`]/g, "'").match(/[a-zà-ÿœç']+/g) || []) { const ls = SWI.get(w); if (!ls) continue; ls.forEach(l => (hits[l] = (hits[l] || 0) + 1 / ls.length)); sum++; if (ls.length === 1) { uniq[ls[0]] = (uniq[ls[0]] || 0) + 1; usum++; } }
   if (sum >= 6) for (const [l, n] of Object.entries(hits)) share[l] = (share[l] || 0) + latin * (n / sum);
   const tot = Object.values(share).reduce((a, b) => a + b, 0); if (!tot || (sum < 6 && tot < 20)) return null;
   const ranked = Object.entries(share).map(([l, n]) => [l, n / tot]).sort((a, b) => b[1] - a[1]);
-  return { main: ranked[0][0], langs: ranked.filter(([, x]) => x >= 0.2).slice(0, 3).map(([l]) => l), conf: ranked[0][1] };
+  /* a second language needs words of its own, not just the small words it shares with the first ("de", "que", "me" in French and Spanish) */
+  const own = l => l === ranked[0][0] || ["ko", "ja", "zh", "ru", "ar", "hi"].includes(l) || ((uniq[l] || 0) >= 4 && (uniq[l] || 0) / Math.max(1, usum) >= .15);
+  return { main: ranked[0][0], langs: ranked.filter(([l, x]) => x >= 0.2 && own(l)).slice(0, 3).map(([l]) => l), conf: ranked[0][1] };
 }
 async function languageOf(t, deep = true) {
   if (!t.lang && t.id) { const c = LANGS.get(t.id); if (c) t.lang = c; }
@@ -345,20 +348,25 @@ async function languageOf0(t, deep) {
 
 /* ---------- language hint from a title, used only when a song has no lyrics on file ---------- */
 const LW = {
-  es: "el la los las de del que mi tu te me se yo amor corazon noche baila bailar perreo quiero dime sin con por para como eres vida dale mami papi bebe nena loco loca solo una uno otra vez todo nada fuego calor besos beso cuerpo luna cielo hoy ahora siempre nunca mas tiempo pa ella el".split(" "),
+  es: "el la los las de del que mi tu te me se yo amor corazon noche baila bailar perreo quiero dime sin con por para como eres vida dale mami papi bebe nena loco loca solo una uno otra vez todo nada fuego calor besos beso cuerpo luna cielo hoy ahora siempre nunca mas tiempo pa ella el pregunto bonito bonita hermosa falta querer quererte ojos boca quien donde cuando nadie contigo conmigo mujer chica fiesta noches dias mentiras olvidarte extrano perdon volver sola mio mia tuya tuyo esto eso ese esa aqui bien malo mala buena bueno dios hay tengo tienes quieres sabes puedo voy vamos ven mira deja tus sus nos pero porque tambien muy mucho poco despues antes luz mar sol agua sangre calle barrio gente cancion corazones lagrimas recuerdos adios hasta luego manana tarde verano invierno primavera amigo amiga amigos hermano hombre chingon morra plebe compa jefe pistola bandido corrido tumbado".split(" "),
   en: "the you me my your i im love baby girl boy night dance it is on in of to and we all up down get got like just dont cant wanna gonna feel time back go no yeah oh".split(" "),
-  pt: "voce nao eu meu minha amor coracao beijo saudade danca vai com sem pra tudo nada agora sempre".split(" "),
+  pt: "voce nao eu meu minha amor coracao beijo saudade danca vai com sem pra tudo nada agora sempre seu sua garota menina muito vem noite ele isso essa esse nossa pro ta mais ate entao pego obrigado olhar sozinho saudades".split(" "),
   fr: "je tu le les des une pas moi toi mon ma amour coeur nuit danse".split(" ")
 };
 /* letters and scripts that belong to one language (family): a Turkish "ı", a Polish "ł", Hangul */
 const LETTERS = [[/[\uac00-\ud7af]/, "ko"], [/[\u3040-\u30ff]/, "ja"], [/[\u4e00-\u9fff]/, "zh"], [/[\u0400-\u04ff]/, "ru"], [/[\u0600-\u06ff]/, "ar"], [/[\u0900-\u097f]/, "hi"],
   [/[\u0370-\u03ff]/, "el"], [/[\u0590-\u05ff]/, "he"], [/[\u0e00-\u0e7f]/, "th"], [/[ıİşŞğĞ]/, "tr"], [/[łŁąęśźżńćĄĘŚŹŻŃĆ]/, "pl"], [/[ěřůĚŘŮ]/, "cs"], [/[ăĂșȘțȚ]/, "ro"], [/[ãõÃÕ]/, "pt"], [/ß/, "de"]];
+const LSHARED = new Set("de se te me tu mi amor tudo nada sem com sempre agora".split(" "));
 function guessLang(title, lettersOnly) {
   const raw = String(title || ""); if (/[ñ¿¡]/i.test(raw)) return "es";
   for (const [re, l] of LETTERS) if (re.test(raw)) return l;
   if (lettersOnly) return null;
   const toks = mnorm(raw).split(" ").filter(Boolean); if (!toks.length) return null;
-  const sc = {}; for (const [l, ws] of Object.entries(LW)) sc[l] = toks.filter(w => ws.includes(w)).length;
+  /* small words Spanish and Portuguese share count half */
+  const sc = {}; for (const [l, ws] of Object.entries(LW)) sc[l] = toks.filter(w => ws.includes(w)).reduce((n, w) => n + ((l === "es" || l === "pt") && LSHARED.has(w) ? .5 : 1), 0);
+  /* Spanish spelling: "-ción", or an acute accent with none of Portuguese's marks (ç, ã, õ, ê, ô, nh, lh) or Italian's grave accents */
+  if (/ci[oó]n\b/i.test(raw) && !/ção/i.test(raw)) sc.es += 2;
+  else if (/[áéíóú]/i.test(raw) && !/[çãõêôàèìòù]|nh|lh/i.test(raw) && !/\b(voc[eê]|n[aã]o|s[oó]|j[aá]|a[ií]|caf[eé])\b/i.test(raw)) sc.es += 1;
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];
 }
 
