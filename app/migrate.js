@@ -78,7 +78,7 @@ function build(seed, legacy, now = Date.now()) {
   report.unsorted = unsorted.length;
   playlists.forEach(Core.validate);
   const used = new Set(playlists.flatMap(p => Object.keys(p.rels)).concat(unsorted));
-  return { playlists, tracks: [...tracks.values()].filter(t => used.has(t.id)), unsorted, never: ["DaBaby"], prefs: legacy && legacy.prefs ? { country: typeof legacy.prefs.itc === "string" && /^[a-z]{2}$/.test(legacy.prefs.itc) ? legacy.prefs.itc : "us", autoNext: legacy.prefs.auto !== false } : {}, report };
+  return { playlists, tracks: [...tracks.values()].filter(t => used.has(t.id)), unsorted, never: ["DaBaby"], prefs: legacy && legacy.prefs ? { country: typeof legacy.prefs.itc === "string" && /^[a-z]{2}$/.test(legacy.prefs.itc) ? legacy.prefs.itc : "us" } : {}, report };
 }
 const API = { build, seedTrack, legacyTrack, prendeteDirection, PRENDETE_TEXT, capFor };
 G.Migrate = API;

@@ -177,7 +177,7 @@ const csvSafe = v => (/^[=@\t\r]/.test(v) || /^[+-].*[(!]/.test(v) ? "'" + v : v
 function toCsv(list) { const rows = [["Position", "Track Name", "Artist Name", "Album"]]; list.forEach((t, i) => rows.push([i + 1, t.t, t.a, t.al])); return rows.map(r => r.map(v => { v = csvSafe(String(v ?? "")); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(",")).join("\r\n") + "\r\n"; }
 
 /* ---------- player (30-second samples) ---------- */
-const A = new Audio(); A.preload = "none";
+const A = new Audio(); A.preload = "none"; A.loop = true; /* a sample repeats until you move on */
 const P = { q: [], i: -1, k: null, loading: false, seq: 0, retried: null, ctx: null, scope: null };
 /* samples belong to the screen they were started on (a playlist's songs, recommendations and rejected count as one screen):
    leaving it stops the sample and hides the player */
@@ -193,9 +193,9 @@ function togglePlay(t, q, ctx) { if (P.k === t.id && !P.loading) { if (A.paused)
 /* playing, or about to: a recommendation card that changes while its sample plays hands the sample to the new card */
 const playing = () => !!P.k && (P.loading || !A.paused);
 function start() {
-  const t = getTrack(P.q[P.i]); if (!t) return; if (P.retried && P.retried !== t.id) P.retried = null; P.k = t.id; const seq = ++P.seq; showPlayer(); markRows(); media(t); P.loading = true; A.loop = !S.meta.autoNext; /* a sample repeats until you move on, unless "play the next one" is on */
+  const t = getTrack(P.q[P.i]); if (!t) return; if (P.retried && P.retried !== t.id) P.retried = null; P.k = t.id; const seq = ++P.seq; showPlayer(); markRows(); media(t); P.loading = true;
   try { A.src = SILENT; A.play().catch(() => {}); } catch {}
-  sampleUrl(t).then(u => { if (seq !== P.seq) return; P.loading = false; if (!u) { A.pause(); toast("No sample found for this one. Try Spotify ↗"); markRows(); updatePlayBtns(); if (S.meta.autoNext) setTimeout(() => { if (seq === P.seq) next(); }, 1200); return; } A.src = u; A.play().catch(playErr); })
+  sampleUrl(t).then(u => { if (seq !== P.seq) return; P.loading = false; if (!u) { A.pause(); toast("No sample found for this one. Try Spotify ↗"); markRows(); updatePlayBtns(); return; } A.src = u; A.play().catch(playErr); })
     .catch(() => { if (seq !== P.seq) return; P.loading = false; A.pause(); toast("Couldn't reach the sample. Check your connection."); markRows(); updatePlayBtns(); });
 }
 function playErr(e) { if (e && e.name === "NotAllowedError") toast("Tap play to start the sample."); }
@@ -204,7 +204,7 @@ function cardFollows() { const pid = P.qk && P.qk.startsWith("rec:") ? P.qk.slic
   S.ui.card[pid] = P.k; const r = S.route; if (r.v === "pl" && r.id === pid && r.tab === "recs" && (S.ui.view[pid] || {}).recView !== "list") render(); }
 function next() { if (P.i < P.q.length - 1) { P.i++; start(); cardFollows(); } else { A.pause(); toast("End of this list."); } }
 function prev() { if (A.currentTime > 3 || P.i <= 0) { A.currentTime = 0; return; } P.i--; start(); cardFollows(); }
-A.addEventListener("ended", () => { if (P.loading) return; if (S.meta.autoNext) next(); else { A.currentTime = 0; A.play().catch(() => markRows()); } });
+A.addEventListener("ended", () => { if (P.loading) return; A.currentTime = 0; A.play().catch(() => markRows()); }); /* in case a browser ignores loop */
 A.addEventListener("error", () => { if (P.loading || !A.src || A.src.startsWith("data:")) return; const t = getTrack(P.k); if (t && t.dz && P.retried !== t.id) { P.retried = t.id; t.prevAt = 0; start(); return; } toast("This sample couldn't load."); markRows(); updatePlayBtns(); });
 A.addEventListener("play", () => { markRows(); updatePlayBtns(); }); A.addEventListener("pause", () => { markRows(); updatePlayBtns(); });
 let seeking = false;
@@ -224,12 +224,11 @@ function renderNp() {
   const acts = $("#npacts"); acts.replaceChildren();
   if (c && r && r.state === "PENDING") acts.append(btn("Reject", "ghost sm", () => { closeNp(); rejectFlow(c.id, [t.id]); }), btn("Approve", "ok sm", () => approveFlow(c.id, [t.id]), { ic: "check" }));
   acts.append(h("a", { class: "lnk", href: spLink(t), target: "_blank", rel: "noopener noreferrer", text: "Open in Spotify ↗", style: "align-self:center" }));
-  updatePlayBtns(); const d = A.duration || 30; $("#seek").max = d; $("#seek").value = A.currentTime || 0; $("#tcur").textContent = fmt(A.currentTime); $("#tdur").textContent = fmt(d); $("#autonext").checked = !!S.meta.autoNext;
+  updatePlayBtns(); const d = A.duration || 30; $("#seek").max = d; $("#seek").value = A.currentTime || 0; $("#tcur").textContent = fmt(A.currentTime); $("#tdur").textContent = fmt(d);
 }
 function initPlayer() {
   $("#pplay").onclick = () => { if (A.paused) A.play().catch(playErr); else A.pause(); }; $("#pnext").innerHTML = I("next"); $("#pnext").onclick = next;
   $("#popen").onclick = openNp; $("#npw .x").innerHTML = I("x"); $("#npw").addEventListener("click", e => { if (e.target.closest("[data-close]")) closeNp(); });
   $("#nprev").innerHTML = I("prev"); $("#nnext").innerHTML = I("next"); $("#nprev").onclick = prev; $("#nnext").onclick = next; $("#nplay").onclick = () => { if (A.paused) A.play().catch(playErr); else A.pause(); };
   $("#seek").addEventListener("input", e => { seeking = true; $("#tcur").textContent = fmt(+e.target.value); }); $("#seek").addEventListener("change", e => { A.currentTime = +e.target.value; seeking = false; });
-  $("#autonext").onchange = e => { S.meta.autoNext = e.target.checked; A.loop = !S.meta.autoNext; saveMeta().catch(() => {}); };
 }

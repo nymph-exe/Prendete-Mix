@@ -134,8 +134,7 @@ function vSettings(v) {
     banEditor(S.meta.never, { label: "Artists", onchange: () => act(() => saveMeta(), "Saved.") })));
   const cc = h("select", { "aria-label": "Apple Music store", onchange: e => { S.meta.country = e.target.value; Catalog.SETTINGS.country = e.target.value; saveMeta().catch(() => {}); toast("Saved."); } });
   [["us", "United States"], ["pa", "Panamá"], ["mx", "México"], ["es", "España"], ["co", "Colombia"], ["pr", "Puerto Rico"], ["ar", "Argentina"], ["br", "Brasil"], ["gb", "United Kingdom"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === S.meta.country) o.selected = true; cc.append(o); });
-  const an = h("input", { type: "checkbox", onchange: e => { S.meta.autoNext = e.target.checked; A.loop = !S.meta.autoNext; saveMeta().catch(() => {}); } }); an.checked = !!S.meta.autoNext;
-  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Search and samples" }), h("div", { class: "field" }, h("label", { text: "Apple Music store (used when Deezer doesn't have a song)" }), cc), h("label", { class: "chk" }, an, "Play the next sample when one ends"), h("p", { class: "small", style: "margin:4px 0 0", text: "Off: a sample repeats until you move on." })));
+  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Search and samples" }), h("div", { class: "field" }, h("label", { text: "Apple Music store (used when Deezer doesn't have a song)" }), cc)));
   const inp = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: e => { const f = e.target.files[0]; if (f) restoreBackup(f); e.target.value = ""; } });
   m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Backup" }), h("p", { class: "lede", text: "Save a copy now and then, or use it to move your playlists to another device. AI keys aren't included." }),
     h("div", { class: "btns" }, btn("Save backup", "", saveBackup, { ic: "dl" }), h("label", { class: "btn ghost", tabindex: "0", onclick: () => inp.click(), onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } } }, "Restore backup"), inp)));
@@ -159,14 +158,12 @@ function saveBackup() {
 }
 /* settings from outside this session (a backup, an old save): keep the right types so no screen trips on them */
 function fixMeta(m, defaults = {}) {
-  const o = Object.assign({ v: 3, order: [], never: [], country: "us", autoNext: false, ai: {}, unsorted: [] }, defaults, m && typeof m === "object" && !Array.isArray(m) ? m : {});
+  const o = Object.assign({ v: 3, order: [], never: [], country: "us", ai: {}, unsorted: [] }, defaults, m && typeof m === "object" && !Array.isArray(m) ? m : {});
   o.order = Array.isArray(o.order) ? o.order.filter(x => typeof x === "string") : [];
   o.never = Array.isArray(o.never) ? o.never : typeof o.never === "string" ? [o.never] : [];
   o.never = o.never.filter(e => (typeof e === "string" && e.trim()) || (e && typeof e === "object" && typeof e.name === "string" && e.name.trim()));
   if (typeof o.country !== "string" || !/^[a-z]{2}$/.test(o.country)) o.country = "us";
-  /* samples used to move on to the next one by default; now they repeat until you move on (once, for saves from before: loopV) */
-  if (!o.loopV) { o.autoNext = false; o.loopV = 1; }
-  o.autoNext = o.autoNext === true || o.autoNext === "true";
+  delete o.autoNext; delete o.loopV; /* the old "play the next sample" setting: samples always repeat now */
   if (!o.ai || typeof o.ai !== "object" || Array.isArray(o.ai)) o.ai = {};
   o.unsorted = Array.isArray(o.unsorted) ? o.unsorted.filter(x => typeof x === "string") : [];
   return o;
@@ -282,7 +279,7 @@ async function firstRun() {
   const seed = await fetch("data/seed.json", { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error("seed " + r.status); return r.json(); });
   let legacy = null; try { legacy = JSON.parse(localStorage.getItem("prendete-standalone-v1") || "null"); } catch {}
   const out = Migrate.build(seed, legacy);
-  const meta = { v: 3, created: Date.now(), order: out.playlists.map(p => p.id), never: out.never, country: out.prefs.country || "us", autoNext: out.prefs.autoNext !== false, ai: {}, unsorted: out.unsorted,
+  const meta = { v: 3, created: Date.now(), order: out.playlists.map(p => p.id), never: out.never, country: out.prefs.country || "us", ai: {}, unsorted: out.unsorted,
     migrated: { at: Date.now(), report: out.report, prendete: out.playlists[0].id, seen: false } };
   const ops = [...out.playlists.map(p => ({ store: "kv", key: "pl:" + p.id, value: p })), ...out.tracks.map(t => ({ store: "tracks", value: t })), { store: "kv", key: "meta", value: meta }];
   if (legacy) ops.push({ store: "kv", key: "legacy-backup", value: legacy });
@@ -331,7 +328,7 @@ async function boot() {
     $("#view").replaceChildren(h("main", { class: "wrap" }, h("div", { class: "note err", text: "Couldn't set up the app: " + (e.message || e) + ". Check your connection and try again." }), btn("Try again", "red", () => location.reload())));
     return;
   }
-  const wasLoop = S.meta && S.meta.loopV; S.meta = fixMeta(S.meta, { never: ["DaBaby"] }); if (!wasLoop) saveMeta().catch(() => {});
+  const old = S.meta && ("autoNext" in S.meta || "loopV" in S.meta); S.meta = fixMeta(S.meta, { never: ["DaBaby"] }); if (old) saveMeta().catch(() => {});
   S.meta.order = S.meta.order.filter(id => S.pls.has(id)).concat([...S.pls.keys()].filter(id => !S.meta.order.includes(id)));
   Catalog.SETTINGS.country = S.meta.country;
   S.route = parseRoute(); render(true);
