@@ -868,7 +868,7 @@ async function classicRun(ctx, opt) {
     const room = Math.min(target - found, last ? okd.length : Math.max(1, Math.ceil(okd.length * .7)));
     for (const x of okd) { if (keep.length >= room) break; const a = primary(x.t); if ((per.get(a) || 0) >= capOf(x.t) || (inPl.get(a) || 0) + (per.get(a) || 0) >= plCap) continue; per.set(a, (per.get(a) || 0) + 1); keep.push(x); }
     if (!keep.length) return;
-    const r = await opt.onBatch(keep.map(x => { const v = vibe(x.t.f); return { t: x.t, why: x.why + (v ? `, ${v}` : "") }; }));
+    const r = await opt.onBatch(keep.map(x => { const v = vibe(x.t.f); return { t: x.t, why: [x.why, v].filter(Boolean).join(", ") || null }; })); /* a pick with no reason used to read "null" */
     found += r.added; keep.forEach(x => { if (r.addedIds && r.addedIds.includes(x.t.id)) { inPl.set(primary(x.t), (inPl.get(primary(x.t)) || 0) + 1); if (x.wi >= 0) WC[x.wi] = (WC[x.wi] || 0) + 1; } });
   };
   const deep = tr => (P.R.avoidHits ? tr.slice().sort((a, b) => Math.abs((a.rank || 0) - 300000) - Math.abs((b.rank || 0) - 300000)) : tr);

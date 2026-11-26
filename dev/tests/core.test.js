@@ -100,6 +100,8 @@ T("AT-077/078", "reset clears active decisions but keeps must-includes", () => {
   eq([c(p).approved, c(p).pending, c(p).rejected, p.status, p.epoch > ep], [1, 0, 0, "IN_PROGRESS", true]);
   eq(C.appendCandidates(p, [tracks[ids[1]]], { batchId: "after" }, get).added.length, 1, "old rejection no longer active");
 });
+T("ORDER-1", "a whole new order keeps the same songs", () => { const p = P(); fillPending(p, 17000, 4); C.approve(p, C.idsIn(p, "PENDING")); const rev = p.order.slice().reverse(); C.setOrder(p, rev); eq(p.order, rev);
+  throwsCode(() => C.setOrder(p, rev.slice(1)), "STATE"); throwsCode(() => C.setOrder(p, [...rev.slice(1), "dz:nope"]), "STATE"); eq(p.order, rev); });
 T("AT-079/081", "reordering only changes order", () => { const p = P(); fillPending(p, 16000, 3); C.approve(p, C.idsIn(p, "PENDING")); const st = JSON.stringify(c(p)); const last = p.order[2]; C.reorder(p, last, 0); eq([p.order[0], JSON.stringify(c(p))], [last, st]); });
 T("AT-090", "repeating an approval doesn't duplicate", () => { const p = P(); fillPending(p, 17000, 1); const [a] = C.idsIn(p, "PENDING"); C.approve(p, [a]); C.approve(p, [a]); eq([c(p).approved, p.order.length], [1, 1]); });
 T("APP-011", "rejected songs can't be approved without restoring", () => { const p = P(); fillPending(p, 18000, 1); const [a] = C.idsIn(p, "PENDING"); C.reject(p, [a]); throwsCode(() => C.approve(p, [a]), "REJECTED"); });

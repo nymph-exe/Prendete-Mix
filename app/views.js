@@ -15,6 +15,7 @@ function go(hash) { if (location.hash === hash) render(true); else location.hash
 window.addEventListener("hashchange", () => { S.ui.scroll[routeKey(S.route)] = scrollY; S.route = parseRoute(); render(true); });
 function render(nav) {
   const r = S.route, v = $("#view"); const y = nav ? S.ui.scroll[routeKey(r)] || 0 : scrollY;
+  if (P.k && P.scope && scopeOf(r) !== P.scope) stopPlayer();
   v.replaceChildren();
   if (r.v === "new") vNew(v); else if (r.v === "settings") vSettings(v); else if (r.v === "pl") vPlaylist(v, r); else vHome(v);
   scrollTo(0, y); markRows();
@@ -27,7 +28,7 @@ function setTop(title, sub, back) {
 }
 const statusLabel = pl => (pl.status === "COMPLETED" ? "Completed" : "In progress");
 const statusPill = pl => h("span", { class: "pill" + (pl.status === "COMPLETED" ? " done" : ""), text: statusLabel(pl) });
-const headSub = pl => [statusPill(pl), h("span", { text: plural(Core.counts(pl).approved, "song") })];
+const headSub = pl => [statusPill(pl)];
 function updateHead(id) { const pl = S.pls.get(id); if (pl) { setTop(pl.name, headSub(pl), "#/"); const s = $("#stats"); if (s) s.replaceWith(statsEl(pl)); } }
 function dirSummary(pl) {
   const d = pl.direction || {}, f = d.form || {}; if (d.text) return d.text;
@@ -49,7 +50,7 @@ function mosaic(pl) {
 function vHome(v) {
   const all = S.meta.order.map(id => S.pls.get(id)).filter(Boolean);
   const nIn = all.filter(p => p.status === "IN_PROGRESS").length, nDone = all.length - nIn;
-  setTop("MIXER", h("span", { text: `${plural(all.length, "playlist")}, ${nIn} in progress, ${nDone} completed` }), null);
+  setTop("MIXER", null, null); /* the filter chips below already count playlists by status */
   const m = h("main", { class: "wrap" }); v.append(m);
   m.append(h("div", { class: "btns", style: "margin-top:14px" }, btn("Create a playlist", "red", () => { S.create = null; go("#/new"); }, { ic: "plus" })));
   if (S.meta.migrated && !S.meta.migrated.seen) {
@@ -76,7 +77,8 @@ function firstAi() { return ["gemini", "openrouter"].find(aiReady) || null; }
 function defaultModel(p) { return "auto"; }
 function aiCtx(eng) { const p = eng && eng.provider; const a = (p && S.meta.ai[p]) || {}; return { provider: p, model: (eng && eng.model) || "auto", key: a.key || null, models: a.models || [], memo: a.memo || {}, onMemo: memo => { if (S.meta.ai[p]) { S.meta.ai[p].memo = memo; saveMeta().catch(() => {}); } } }; }
 function engineLabel(eng) { if (!eng || eng.mode !== "ai") return "Classic"; const p = Engines.PROVIDERS[eng.provider]; return `AI (${p ? p.label.replace(/ \(.*\)/, "") : "?"}, ${!eng.model || eng.model === "auto" ? "automatic model" : eng.model})`; }
-const CLASSIC_NOTE = "Classic reads your description with built-in rules and recognizes over 2,000 genre names. It starts from a scene map of about 580 scenes and 11,000 artists (a curated core of who defines each scene and who carries it now, plus small scenes for 400 more genres built from ListenBrainz tags), then finds songs through Deezer and the listening habits of ListenBrainz users (similar artists for 98,000 artists come built in), keeps to your genres with MusicBrainz, Wikidata and Discogs data and MusicBrainz's genre family tree, listens to a song preview to tell the style of artists no database knows yet, checks energy, tempo and mood with ReccoBeats or by listening to the preview, and checks the language with LRCLIB lyrics. Every approval and rejection here retunes it.";
+const CLASSIC_NOTE = "No AI and no key. It finds songs through music databases and what real listeners play together, and learns from every approval and rejection.";
+const CLASSIC_MORE = "It reads descriptions with built-in rules and knows over 2,000 genre names. It starts from a map of about 580 scenes and 11,000 artists, finds songs through Deezer and the listening habits of ListenBrainz users (similar artists for 98,000 artists come built in), keeps to your genres with MusicBrainz, Wikidata and Discogs data, listens to song previews to tell the style of artists no database knows yet, checks energy, tempo and mood with ReccoBeats or the preview, and checks the language with LRCLIB lyrics.";
 function enginePicker(eng, onchange) {
   const box = h("div");
   const draw = () => {
@@ -84,7 +86,7 @@ function enginePicker(eng, onchange) {
     box.append(h("div", { class: "seg", role: "group", "aria-label": "Recommendations by" },
       h("button", { type: "button", "aria-pressed": String(eng.mode !== "ai"), onclick: () => { eng.mode = "classic"; onchange(eng); draw(); } }, "Classic"),
       h("button", { type: "button", "aria-pressed": String(eng.mode === "ai"), onclick: () => { eng.mode = "ai"; if (!eng.provider) eng.provider = firstAi() || "gemini"; if (!eng.model) eng.model = defaultModel(eng.provider); onchange(eng); draw(); } }, "AI")));
-    if (eng.mode !== "ai") { box.append(h("p", { class: "small", text: CLASSIC_NOTE })); return; }
+    if (eng.mode !== "ai") { box.append(h("p", { class: "small", text: CLASSIC_NOTE }), h("details", { class: "lite" }, h("summary", { text: "How Classic works" }), h("p", { class: "small", text: CLASSIC_MORE }))); return; }
     const sel = h("select", { class: "selp", "aria-label": "AI service", onchange: e => { eng.provider = e.target.value; eng.model = defaultModel(eng.provider); onchange(eng); draw(); } });
     for (const [k, p] of Object.entries(Engines.PROVIDERS)) { const o = h("option", { value: k, text: p.label + (p.wip ? " (coming next)" : !aiReady(k) ? " (add a key in Settings)" : "") }); if (p.wip) o.disabled = true; if (k === eng.provider) o.selected = true; sel.append(o); }
     box.append(h("div", { class: "field" }, h("span", { class: "lbl", text: "AI service" }), sel));
@@ -206,7 +208,7 @@ function banEditor(list, o = {}) {
       const meta = [g.about, g.fans ? `${Artists.fmtFans(g.fans)} fans on Deezer` : "", g.genre].filter(Boolean).join(" · ");
       const src = g.sources.length ? (g.sources.length > 1 ? "Same artist on " : "Only on ") + andList(g.sources) + (g.dupes ? ` (includes ${g.dupes === 1 ? "a second Deezer profile" : g.dupes + " more Deezer profiles"})` : "") : "";
       box.append(h("div", { class: "res found" }, ava(g.pic, g.name, "g" + i + g.name), h("div", {}, h("div", { class: "t", text: g.name }), meta ? h("div", { class: "m", text: meta }) : null, h("div", { class: "m", text: src }),
-        h("div", { class: "pick" }, btn(on ? "✓ On the list" : "Never suggest", on ? "" : "ghost", on ? () => {} : () => pick(g))))));
+        h("div", { class: "pick" }, btn(on ? "✓ On the list" : "Never suggest", on ? "on" : "ghost", on ? () => {} : () => pick(g))))));
     });
     box.append(h("div", { class: "btns" }, !more && res.groups.length > 5 ? btn(`Show ${res.groups.length - 5} more`, "ghost sm", () => { more = true; draw(); }) : null, btn("Cancel", "ghost sm", () => { res = null; replacing = null; inp.value = ""; draw(); })));
   };
@@ -244,37 +246,45 @@ function dirEditor(st, mode, o = {}) {
     if (mode === "A") root.append(h("details", { class: "more", open: d.text ? true : null }, h("summary", { text: "Add a description (optional)" }), desc)); else root.append(desc);
     if (mode === "B" && !st._read && !st._manual) { root.append(h("p", { class: "small" }, "Prefer picking things yourself? ", h("button", { class: "lnk", type: "button", text: "Use the form instead", onclick: () => { st._manual = true; draw(); } }))); return; }
     const picks = h("div"), res = h("div");
+    /* the picks below and the ✓ marks on the search results show the same choices: every change redraws both */
+    const sync = () => { drawPicks(); drawRes(); };
     const drop = id => { d.refs = d.refs.filter(x => x !== id); st.must = st.must.filter(x => x !== id); d.exclude.songs = d.exclude.songs.filter(x => x !== id); };
     const drawPicks = () => {
       picks.replaceChildren();
       const sec = (title, ids, acts, empty) => { if (!ids.length && !empty) return; picks.append(h("h3", { class: "sub2", text: `${title} (${ids.length})` })); if (!ids.length) picks.append(h("p", { class: "small", text: empty }));
         const box = h("div"); rowsInto(box, ids.map(getTrack).filter(Boolean), "pick:" + title, t => ({ below: acts(t) })); picks.append(box); };
-      sec("Sounds like", d.refs, t => [btn("Must include", "ghost sm", () => { drop(t.id); st.must.push(t.id); drawPicks(); }), ibtn("x", "Remove " + t.t, () => { drop(t.id); drawPicks(); })], mode === "A" ? "Songs that show the sound you want. They only go on the playlist if you approve them later." : null);
-      sec("Must include", st.must, t => [btn("Just a reference", "ghost sm", () => { drop(t.id); d.refs.push(t.id); drawPicks(); }), ibtn("x", "Remove " + t.t, () => { drop(t.id); drawPicks(); })], mode === "A" ? "Songs that go straight onto the playlist." : null);
-      if ((st.mustLocked || []).length) sec("Already must-include", st.mustLocked, t => [btn("Unmark", "ghost sm", () => { st.mustLocked = st.mustLocked.filter(x => x !== t.id); (st.unmust = st.unmust || []).push(t.id); drawPicks(); })], null);
-      if (d.artists.length) { picks.append(h("h3", { class: "sub2", text: `Artists it should sound like (${d.artists.length})` })); picks.append(h("div", { class: "chips wrapc" }, d.artists.map(a => { const c = h("button", { class: "chip", type: "button", "aria-label": "Remove " + a.name, onclick: () => { d.artists = d.artists.filter(x => x !== a); drawPicks(); } }, a.name); const x = h("span", { class: "x" }); x.innerHTML = I("x"); c.append(x); return c; }))); }
-      sec("Never include", d.exclude.songs, t => [ibtn("x", "Remove " + t.t, () => { drop(t.id); drawPicks(); })], null);
+      sec("Sounds like", d.refs, t => [btn("Must include", "ghost sm", () => { drop(t.id); st.must.push(t.id); sync(); }), ibtn("x", "Remove " + t.t, () => { drop(t.id); sync(); })], mode === "A" ? "Songs that show the sound you want. They only go on the playlist if you approve them later." : null);
+      sec("Must include", st.must, t => [btn("Just a reference", "ghost sm", () => { drop(t.id); d.refs.push(t.id); sync(); }), ibtn("x", "Remove " + t.t, () => { drop(t.id); sync(); })], mode === "A" ? "Songs that go straight onto the playlist." : null);
+      if ((st.mustLocked || []).length) sec("Already must-include", st.mustLocked, t => [btn("Unmark", "ghost sm", () => { st.mustLocked = st.mustLocked.filter(x => x !== t.id); (st.unmust = st.unmust || []).push(t.id); sync(); })], null);
+      if (d.artists.length) { picks.append(h("h3", { class: "sub2", text: `Artists it should sound like (${d.artists.length})` })); picks.append(h("div", { class: "chips wrapc" }, d.artists.map(a => { const c = h("button", { class: "chip", type: "button", "aria-label": "Remove " + a.name, onclick: () => { d.artists = d.artists.filter(x => x !== a); sync(); } }, a.name); const x = h("span", { class: "x" }); x.innerHTML = I("x"); c.append(x); return c; }))); }
+      sec("Never include", d.exclude.songs, t => [ibtn("x", "Remove " + t.t, () => { drop(t.id); sync(); })], null);
       if (o.onchange) o.onchange();
     };
-    const exBox = banEditor(d.exclude.artists, { label: "Never suggest these artists here", empty: "None. Artists in Settings → Never suggest are left out of every playlist." });
+    const exBox = banEditor(d.exclude.artists, { label: "Never suggest these artists here", empty: "None. Artists in Settings → Never suggest are left out of every playlist.", onchange: () => drawRes() });
     const drawRes = () => {
       res.replaceChildren(); const r = st._res; if (!r) return;
       if (r.msg) res.append(h("p", { class: "small", text: r.msg }));
       (r.artists || []).forEach(a => { const on = d.artists.some(x => x.id === a.id); const exE = { name: a.name, dz: [a.id], pic: a.pic }; const ex = d.exclude.artists.some(x => Artists.isLinked(x) && Artists.same(x, exE));
         res.append(h("div", { class: "res" }, h("div", { class: "ava" }, a.pic ? h("img", { src: a.pic, alt: "", referrerpolicy: "no-referrer" }) : placeholder({ id: "a" + a.id, t: a.name })),
-          h("div", {}, h("div", { class: "t", text: a.name }), h("div", { class: "m", text: "Artist" }), h("div", { class: "pick" },
-            btn(on ? "✓ Sounds like" : "Sounds like", on ? "" : "ghost", () => { if (on) d.artists = d.artists.filter(x => x.id !== a.id); else d.artists.push({ id: a.id, name: a.name }); drawPicks(); drawRes(); }),
-            btn(ex ? "✓ Never suggest" : "Never suggest", ex ? "" : "ghost", () => { const L = d.exclude.artists;
+          h("div", {}, h("div", { class: "t", text: a.name }), h("div", { class: "m", text: "Artist" + (a.fans ? ` · ${Artists.fmtFans(a.fans)} fans` : "") }), h("div", { class: "pick" },
+            btn(on ? "✓ Sounds like" : "Sounds like", on ? "sm on" : "ghost sm", () => { if (on) d.artists = d.artists.filter(x => x.id !== a.id); else d.artists.push({ id: a.id, name: a.name }); drawPicks(); drawRes(); }),
+            btn(ex ? "✓ Never suggest" : "Never suggest", ex ? "sm on" : "ghost sm", () => { const L = d.exclude.artists;
               if (ex) { const j = L.findIndex(x => Artists.same(x, exE)); if (j >= 0) L.splice(j, 1); }
               else { Artists.add(L, exE); /* add this artist's Apple Music and MusicBrainz IDs, and duplicate Deezer profiles, in the background */
                 Artists.complete(exE).then(full => { const j = L.findIndex(x => Artists.same(x, exE)); if (j >= 0 && full && typeof full === "object") { L[j] = full; exBox.redraw(); } }).catch(() => {}); }
               exBox.redraw(); drawRes(); }))))); });
       Q["search"] = (r.tracks || []).map(t => t.id);
       (r.tracks || []).forEach(t => { const cur = d.refs.includes(t.id) ? "ref" : st.must.includes(t.id) || (st.mustLocked || []).includes(t.id) ? "must" : d.exclude.songs.includes(t.id) ? "ex" : "";
-        const set = k => async () => { drop(t.id); if (k !== cur) { if (k !== "ex") { try { const full = await Catalog.complete(t); S.tmp.set(full.id, full); } catch { /* the song is usable as is; its details fill in later */ } } (k === "ref" ? d.refs : k === "must" ? st.must : d.exclude.songs).push(t.id); } drawPicks(); drawRes(); };
-        const cv = h("button", { class: "cov", type: "button", "aria-label": "Play sample of " + t.t, onclick: () => togglePlay(t, "search") }, coverEl(t));
+        const set = k => async e => { const b = e && e.currentTarget; if (b && k !== cur && k !== "ex") { b.disabled = true; b.textContent = "Adding…"; } /* looking up the song's details takes a moment */
+          drop(t.id);
+          /* a song already must-include on this playlist: choosing anything else (or tapping ✓ again) unmarks it */
+          if ((st.mustLocked || []).includes(t.id)) { st.mustLocked = st.mustLocked.filter(x => x !== t.id); (st.unmust = st.unmust || []).push(t.id); }
+          if (k !== cur) { if (k !== "ex") { try { const full = await Catalog.complete(t); S.tmp.set(full.id, full); } catch { /* the song is usable as is; its details fill in later */ } }
+            drop(t.id); if (k === "must" && (st.unmust || []).includes(t.id)) { st.unmust = st.unmust.filter(x => x !== t.id); st.mustLocked.push(t.id); } /* it was must-include already: just keep it */
+            else (k === "ref" ? d.refs : k === "must" ? st.must : d.exclude.songs).push(t.id); } sync(); };
+        const cv = coverBtn(t, "search");
         res.append(h("div", { class: "res", "data-k": t.id }, cv, h("div", {}, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: artistsOf(t.a) + (t.exp ? ` · ${t.exp === "explicit" ? "Explicit" : "Clean"}` : "") }),
-          h("div", { class: "pick" }, btn(cur === "ref" ? "✓ Sounds like" : "Sounds like", cur === "ref" ? "" : "ghost", set("ref")), btn(cur === "must" ? "✓ Must include" : "Must include", cur === "must" ? "" : "ghost", set("must")), btn(cur === "ex" ? "✓ Never include" : "Never include", cur === "ex" ? "" : "ghost", set("ex")))))); });
+          h("div", { class: "pick" }, btn(cur === "ref" ? "✓ Sounds like" : "Sounds like", cur === "ref" ? "sm on" : "ghost sm", set("ref")), btn(cur === "must" ? "✓ Must include" : "Must include", cur === "must" ? "sm on" : "ghost sm", set("must")), btn(cur === "ex" ? "✓ Never include" : "Never include", cur === "ex" ? "sm on" : "ghost sm", set("ex")))))); });
     };
     const inp = h("input", { type: "search", enterkeyhint: "search", autocomplete: "off", placeholder: "Search a song or an artist", "aria-label": "Search songs and artists", value: st._q || "" });
     const srch = async () => { const q = inp.value.trim(); st._q = q; if (!q) return; st._res = { msg: "Searching…" }; drawRes();
@@ -282,7 +292,7 @@ function dirEditor(st, mode, o = {}) {
       try { artists = await Artists.quick(q, tracks, 3); } catch {}
       if (!tracks.length) { try { const it = await Catalog.ITunes.search(q, 15); if (it.length && dzDown) msg = "Deezer didn't answer, so these songs are from Apple Music."; tracks = it; } catch {} }
       if (!tracks.length && !artists.length && dzDown) msg = "Couldn't reach Deezer or Apple Music. Check your connection and try again.";
-      tracks.forEach(t => { if (!S.tr.has(t.id)) S.tmp.set(t.id, t); });
+      tracks = Artists.songOrder(q, tracks); tracks.forEach(t => { if (!S.tr.has(t.id)) S.tmp.set(t.id, t); });
       st._res = { tracks, artists: artists.slice(0, 3), msg: msg || (!tracks.length && !artists.length ? "Nothing found. Try other words." : "") }; drawRes(); };
     root.append(h("form", { class: "field", role: "search", onsubmit: e => { e.preventDefault(); srch(); } }, h("label", { text: mode === "A" ? "Find artists and songs" : "Add songs or artists" }), h("div", { class: "inl" }, inp, btn("Search", "", null, { type: "submit", ic: "search" }))), res, picks);
     const det = h("details", { class: "more" }, h("summary", { text: mode === "A" ? "Genres, mood, rhythm, years and languages (optional)" : "Genres, mood, rhythm, years and languages" }), formEditor(d.form), exBox);
@@ -312,9 +322,12 @@ function vNew(v) {
     h("div", { class: "field" }, h("label", { text: "Capacity" }), cap, h("span", { class: "small", text: "The most songs it can hold. It's a ceiling, not a goal: you decide when it's done." })),
     h("div", { class: "field", style: "margin-bottom:0" }, h("span", { class: "lbl", text: "Recommendations by" }), enginePicker(D.engine, () => render()))));
   m.append(h("h2", { class: "sec", text: D.method === "A" ? "Artists and songs" : "Describe it" }));
-  m.append(dirEditor(D.st, D.method, { engine: () => D.engine, onchange: () => { const n = $('input[aria-label="Playlist name"]'); if (n && D.name && !n.value) n.value = D.name; } }));
+  /* describing it: the create button waits until the description has been read (or the form is in use), so there's one next step at a time */
+  const waiting = () => D.method === "B" && !D.st._read && !D.st._manual;
+  const cta = h("div", { class: "btns", hidden: waiting() ? true : null }, btn(D.busy ? "Creating…" : "Create and find songs", "red", () => createFromDraft(D), { ic: "spark", disabled: D.busy ? true : null }));
+  m.append(dirEditor(D.st, D.method, { engine: () => D.engine, onchange: () => { const n = $('input[aria-label="Playlist name"]'); if (n && D.name && !n.value) n.value = D.name; cta.hidden = waiting(); } }));
   m.append(h("p", { class: "status", "aria-live": "polite", text: D.msg || "" }));
-  m.append(h("div", { class: "btns" }, btn(D.busy ? "Creating…" : "Create and find songs", "red", () => createFromDraft(D), { ic: "spark", disabled: D.busy ? true : null })));
+  m.append(cta);
 }
 /* Classic can start from any of these: songs, artists, genres, styles, moods, or the years, language, energy or tempo asked for */
 function hasSeeds(st) { const d = st.dir, f = d.form || {}; return d.refs.length || st.must.length || d.artists.length || (f.genres || []).some(g => g.id) || (f.moods || []).length || (f.keywords || []).length
@@ -342,9 +355,11 @@ async function createFromDraft(D) {
 }
 
 /* ---------- playlist workspace (Section 9) ---------- */
+/* how full the playlist is (the tabs below already count recommendations and rejected songs) */
 function statsEl(pl) {
-  const c = Core.counts(pl);
-  return h("div", { class: "stats", id: "stats" }, [["On the playlist", c.approved], ["Recom­mendations", c.pending], ["Rejected", c.rejected], ["Capacity", pl.capacity], ["Open spots", Math.max(0, c.available)]].map(([l, n]) => h("div", { class: "stat" }, h("b", { text: n }), h("span", { text: l }))));
+  const c = Core.counts(pl), open = Math.max(0, c.available), pct = pl.capacity ? Math.min(100, Math.round(100 * c.approved / pl.capacity)) : 0;
+  return h("div", { class: "cap", id: "stats" }, h("p", {}, h("b", { text: `${c.approved} of ${pl.capacity}` }), " songs · ", open ? plural(open, "open spot") : "full"),
+    h("div", { class: "meter", role: "img", "aria-label": `${pct}% full` }, h("i", { style: `width:${pct}%` })));
 }
 function vPlaylist(v, r) {
   const pl = S.pls.get(r.id);
@@ -367,50 +382,59 @@ function vPlaylist(v, r) {
   const body = h("div"); m.append(body);
   ({ playlist: tabPlaylist, recs: tabRecs, rejected: tabRejected, settings: tabSettings })[r.tab](body, pl);
 }
-const uiOf = id => S.ui.view[id] || (S.ui.view[id] = { plMode: null, plSort: "order", recView: "cards", recSort: "new", recSel: false, rjSel: false });
+const uiOf = id => S.ui.view[id] || (S.ui.view[id] = { plMode: null, plSort: "order", plDir: "asc", recView: "cards", recSort: "added", recDir: "desc", recSel: false, rjSel: false });
 const selOf = (id, k) => { const key = id + ":" + k; if (!S.ui.sel.has(key)) S.ui.sel.set(key, new Set()); return S.ui.sel.get(key); };
 function batchBar(set, actions) { if (!set.size) return null; return h("div", { class: "batch", role: "region", "aria-label": "Selected songs" }, h("b", { text: `${set.size} selected` }), ...actions, btn("Clear", "ghost sm", () => { set.clear(); render(); })); }
 function selHandler(box, set, actions) { return () => { const b = $(".batch"); const nb = batchBar(set, actions()); if (b) b.replaceWith(nb || h("span")); else if (nb) box.append(nb); }; }
+/* sort pickers: what to sort by, and a separate ascending/descending toggle (its label says the current direction) */
+const DIR_WORDS = { az: ["A–Z", "Z–A"], time: ["Oldest", "Newest"] };
+function sortTools(opts, cur, dir, words, onSort, onDir) {
+  const sel = h("select", { "aria-label": "Sort by", onchange: e => onSort(e.target.value) }); opts.forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === cur) o.selected = true; sel.append(o); });
+  if (!words) return [sel];
+  const now = words[dir === "asc" ? 0 : 1], other = words[dir === "asc" ? 1 : 0];
+  const b = h("button", { class: "dirb", type: "button", "aria-label": `${now}. Switch to ${other}`, title: `Switch to ${other}`, onclick: () => onDir(dir === "asc" ? "desc" : "asc") }); b.innerHTML = I("updown"); b.append(now);
+  return [sel, b];
+}
+function plSorted(pl, u) {
+  const list = pl.order.map(getTrack).filter(Boolean); if (u.plSort === "order") return list;
+  const k = u.plSort, sign = u.plDir === "desc" ? -1 : 1, cmp = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
+  return list.slice().sort((a, b) => k === "year" ? (!a.y - !b.y) || sign * ((a.y || 0) - (b.y || 0)) /* songs without a year last either way */
+    : sign * (k === "title" ? cmp(a.t, b.t) || cmp(artistsOf(a.a), artistsOf(b.a)) : cmp(artistsOf(a.a), artistsOf(b.a)) || cmp(a.t, b.t)));
+}
 function tabPlaylist(box, pl) {
-  const u = uiOf(pl.id), sel = selOf(pl.id, "pl");
-  const sort = h("select", { "aria-label": "Sort for viewing", onchange: e => { u.plSort = e.target.value; if (u.plSort !== "order" && u.plMode === "arrange") u.plMode = null; render(); } });
-  [["order", "Your order"], ["title", "Title A–Z"], ["artist", "Artist A–Z"], ["year", "Newest first"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === u.plSort) o.selected = true; sort.append(o); });
-  box.append(h("div", { class: "tool" }, sort, h("div", { class: "seg", role: "group", "aria-label": "Mode" },
-    h("button", { type: "button", "aria-pressed": String(u.plMode === "arrange"), disabled: u.plSort !== "order" ? true : null, onclick: () => { u.plMode = u.plMode === "arrange" ? null : "arrange"; render(); } }, "Arrange"),
-    h("button", { type: "button", "aria-pressed": String(u.plMode === "select"), onclick: () => { u.plMode = u.plMode === "select" ? null : "select"; sel.clear(); render(); } }, "Select"))));
-  if (u.plSort !== "order") box.append(h("p", { class: "small", text: "Sorted for viewing only. Your saved order hasn't changed." }));
+  const u = uiOf(pl.id), sel = selOf(pl.id, "pl"), arrange = u.plMode === "arrange";
+  const words = u.plSort === "order" ? null : u.plSort === "year" ? DIR_WORDS.time : DIR_WORDS.az;
+  box.append(h("div", { class: "tool" }, ...sortTools([["order", "Custom"], ["title", "Song"], ["artist", "Artist"], ["year", "Year"]], u.plSort, u.plDir, words,
+      k => { u.plSort = k; u.plDir = k === "year" ? "desc" : "asc"; render(); }, d => { u.plDir = d; render(); }),
+    h("div", { class: "seg", role: "group", "aria-label": "Mode" }, h("button", { type: "button", "aria-pressed": String(arrange), onclick: () => { u.plMode = arrange ? null : "arrange"; sel.clear(); render(); } }, "Arrange"))));
+  if (arrange && u.plSort !== "order") box.append(h("p", { class: "small", text: "Moving a song saves this sorted order as your custom order." }));
   if (pl.legacyOver) box.append(h("div", { class: "note err", text: `This playlist has ${pl.order.length} songs but the app's limit is ${Core.CONFIG.maxConfirmed}. Nothing was deleted. Remove songs until it fits; new approvals wait until then.` }));
-  let list = pl.order.map(getTrack).filter(Boolean);
-  if (u.plSort === "title") list = list.slice().sort((a, b) => a.t.localeCompare(b.t)); else if (u.plSort === "artist") list = list.slice().sort((a, b) => artistsOf(a.a).localeCompare(artistsOf(b.a))); else if (u.plSort === "year") list = list.slice().sort((a, b) => (b.y || 0) - (a.y || 0));
+  const list = plSorted(pl, u);
   if (!list.length) { box.append(h("p", { class: "empty", text: "No songs on the playlist yet. Approve recommendations or use Random fill." })); return; }
+  /* moving a song in a sorted view keeps what's on screen as the new custom order, with that one move made */
+  const move = (t, step) => { const ids = list.map(x => x.id), i = ids.indexOf(t.id), j = i + step; if (j < 0 || j >= ids.length) return;
+    ids.splice(i, 1); ids.splice(j, 0, t.id); const custom = u.plSort === "order"; u.plSort = "order";
+    act(() => mutate(pl.id, p => (custom ? Core.reorder(p, t.id, j) : Core.setOrder(p, ids)))); };
   const rows = h("div"); box.append(rows); const acts = () => plBatch(pl, sel); const onSel = selHandler(box, sel, acts);
-  rowsInto(rows, list, "pl:" + pl.id, t => {
+  rowsInto(rows, list, "pl:" + pl.id, (t, i) => {
     const r = pl.rels[t.id]; const tags = [];
     if (r.mandatory) tags.push({ t: "Must include", c: "r" });
     if (r.origin === Core.ORIGIN.FILL) tags.push({ t: "Auto-filled", c: "y" }, h("button", { class: "lnk", type: "button", text: "Keep", "aria-label": "Keep " + t.t + " as your own pick", onclick: () => act(() => mutate(pl.id, p => Core.confirmKeep(p, t.id)), "Marked as your pick.") }));
-    let a;
-    if (u.plMode === "arrange") { const pos = pl.order.indexOf(t.id);
-      a = [ibtn("aup", "Move up", () => act(() => mutate(pl.id, p => Core.reorder(p, t.id, pos - 1))), "", { disabled: pos === 0 ? true : null }), ibtn("adn", "Move down", () => act(() => mutate(pl.id, p => Core.reorder(p, t.id, pos + 1))), "", { disabled: pos === pl.order.length - 1 ? true : null }),
-        h("button", { class: "btn ghost sm", type: "button", "aria-label": `Position ${pos + 1}. Move to another position`, onclick: () => moveTo(pl.id, t) }, String(pos + 1))]; }
-    else if (u.plMode === "select") a = [];
-    else a = [ibtn("x", "Remove " + t.t + " from the playlist", () => removeFlow(pl.id, [t.id]), "rj")];
-    return { tags, acts: a, ctx: pl.id, why: r.origin === Core.ORIGIN.FILL ? r.why : null, sel: u.plMode === "select" ? { checked: sel.has(t.id), onchange: on => { if (on) sel.add(t.id); else sel.delete(t.id); onSel(); } } : null };
+    const a = arrange ? [ibtn("aup", "Move " + t.t + " up", () => move(t, -1), "", { disabled: i === 0 ? true : null }), ibtn("adn", "Move " + t.t + " down", () => move(t, 1), "", { disabled: i === list.length - 1 ? true : null })]
+      : [ibtn("x", "Remove " + t.t + " from the playlist", () => removeFlow(pl.id, [t.id]), "rj")];
+    return { tags, acts: a, ctx: pl.id, why: r.origin === Core.ORIGIN.FILL ? r.why : null, sel: arrange ? { checked: sel.has(t.id), onchange: on => { if (on) sel.add(t.id); else sel.delete(t.id); onSel(); } } : null };
   });
-  if (u.plMode === "select") { const b = batchBar(sel, acts()); if (b) box.append(b); }
+  if (arrange) { const b = batchBar(sel, acts()); if (b) box.append(b); }
 }
 const plBatch = (pl, sel) => [btn(`Remove ${sel.size}`, "danger sm", () => removeFlow(pl.id, [...sel], () => sel.clear()))];
-function moveTo(id, t) {
-  const pl = S.pls.get(id); const pos = pl.order.indexOf(t.id);
-  sheet({ title: "Move to position", build: close => { const n = h("input", { type: "number", min: "1", max: String(pl.order.length), value: String(pos + 1), "aria-label": "New position", autofocus: true, inputmode: "numeric" });
-    return [h("p", { class: "lede", text: `${t.t} is at ${pos + 1} of ${pl.order.length}.` }), h("div", { class: "field" }, n), h("div", { class: "foot" }, btn("Cancel", "ghost", () => close()), btn("Move", "red", () => { const to = Math.max(1, Math.min(pl.order.length, Math.round(+n.value || 1))) - 1; close(); act(() => mutate(id, p => Core.reorder(p, t.id, to))); }))]; } });
-}
-function pendingSorted(pl, how) {
-  const list = Core.idsIn(pl, "PENDING").map(getTrack).filter(Boolean);
-  if (how === "artist") return list.sort((a, b) => artistsOf(a.a).localeCompare(artistsOf(b.a)));
+/* recommendations by when they were added (a batch stays together, in the order it was found) or by artist */
+function pendingSorted(pl, how, dir = how === "artist" ? "asc" : "desc") {
+  const list = Core.idsIn(pl, "PENDING").map(getTrack).filter(Boolean), sign = dir === "desc" ? -1 : 1;
+  if (how === "artist") return list.sort((a, b) => sign * (artistsOf(a.a).localeCompare(artistsOf(b.a), undefined, { sensitivity: "base" }) || a.t.localeCompare(b.t)));
   const bt = new Map((pl.batches || []).map(b => [b.id, b.at]));
   const grp = t => { const r = pl.rels[t.id]; return Math.max(r.restoredAt || 0, (r.batch && bt.get(r.batch)) || r.recAt || 0); };
   const at = t => pl.rels[t.id].recAt || 0;
-  return list.sort((a, b) => (how === "old" ? grp(a) - grp(b) || at(a) - at(b) : grp(b) - grp(a) || at(a) - at(b)));
+  return list.sort((a, b) => sign * (grp(a) - grp(b)) || at(a) - at(b));
 }
 function tagsFor(t, r) {
   const out = h("div", { class: "tags" }); if (t.y) out.append(h("span", { class: "tag", text: String(t.y) })); const ln = langName(t); if (ln) out.append(h("span", { class: "tag", text: ln }));
@@ -419,23 +443,27 @@ function tagsFor(t, r) {
 }
 function tabRecs(box, pl) {
   const u = uiOf(pl.id), sel = selOf(pl.id, "rec"), c = Core.counts(pl), full = c.available <= 0 || pl.legacyOver;
-  const sort = h("select", { "aria-label": "Order", onchange: e => { u.recSort = e.target.value; render(); } }); [["new", "Newest first"], ["old", "Oldest first"], ["artist", "Artist A–Z"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === u.recSort) o.selected = true; sort.append(o); });
-  const vs = h("div", { class: "seg", role: "group", "aria-label": "View" }, h("button", { type: "button", "aria-pressed": String(u.recView === "cards"), onclick: () => { u.recView = "cards"; render(); } }), h("button", { type: "button", "aria-pressed": String(u.recView === "list"), onclick: () => { u.recView = "list"; render(); } }));
-  vs.children[0].innerHTML = I("cards") + "Cards"; vs.children[1].innerHTML = I("list") + "List";
-  const tool = h("div", { class: "tool" }, vs, sort); if (u.recView === "list") tool.append(h("div", { class: "seg" }, h("button", { type: "button", "aria-pressed": String(u.recSel), onclick: () => { u.recSel = !u.recSel; sel.clear(); render(); } }, "Select")));
+  const sort = sortTools([["added", "Added"], ["artist", "Artist"]], u.recSort, u.recDir, u.recSort === "artist" ? DIR_WORDS.az : DIR_WORDS.time,
+    k => { u.recSort = k; u.recDir = k === "artist" ? "asc" : "desc"; render(); }, d => { u.recDir = d; render(); });
+  /* icons only, so the view, the sort and its direction fit on one line on a phone */
+  const vs = h("div", { class: "seg ico", role: "group", "aria-label": "View" }, h("button", { type: "button", "aria-label": "Cards", title: "Cards", "aria-pressed": String(u.recView === "cards"), icon: "cards", onclick: () => { u.recView = "cards"; render(); } }),
+    h("button", { type: "button", "aria-label": "List", title: "List", "aria-pressed": String(u.recView === "list"), icon: "list", onclick: () => { u.recView = "list"; sel.clear(); render(); } }));
+  const tool = h("div", { class: "tool" }, vs, ...sort); if (u.recView === "list") tool.append(h("div", { class: "seg ico" }, h("button", { type: "button", "aria-label": "Select songs", title: "Select songs", icon: "select", "aria-pressed": String(u.recSel), onclick: () => { u.recSel = !u.recSel; sel.clear(); render(); } })));
   box.append(tool);
   if (full) box.append(h("p", { class: "note", text: pl.legacyOver ? "Over the app's limit: remove songs before approving more." : `The playlist is full (${c.approved} of ${pl.capacity}). To approve more, raise the capacity in its settings or remove a song. Rejecting and Recalibrate still work.` }));
-  const list = pendingSorted(pl, u.recSort);
+  const list = pendingSorted(pl, u.recSort, u.recDir);
   if (!list.length) { box.append(h("p", { class: "empty", text: S.jobs.has(pl.id) ? "Looking for songs. They show up here as they're found." : "Nothing waiting. Tap Recalibrate to find more." })); return; }
   Q["rec:" + pl.id] = list.map(t => t.id);
   if (u.recView === "cards") {
     const i = Math.max(0, list.findIndex(t => t.id === S.ui.card[pl.id])); const t = list[i]; S.ui.card[pl.id] = t.id; const r = pl.rels[t.id];
+    /* a sample playing from these recommendations moves on with the card: the one you hear is the one you're deciding on */
+    if (playing() && P.k !== t.id && P.qk === "rec:" + pl.id) setTimeout(() => { if (S.ui.card[pl.id] === t.id && playing() && P.k !== t.id) togglePlay(t, "rec:" + pl.id, pl.id); }, 0);
     const nextId = () => (list[i + 1] || list[i - 1] || {}).id;
-    const big = h("button", { class: "big", type: "button", "aria-label": "Play sample of " + t.t, onclick: () => togglePlay(t, "rec:" + pl.id, pl.id) }, coverEl(t), h("span", { class: "ov" })); big.querySelector(".ov").innerHTML = I("play");
+    const big = h("button", { class: "big", type: "button", "aria-label": "Play sample of " + t.t, onclick: () => togglePlay(t, "rec:" + pl.id, pl.id) }, coverEl(t), h("span", { class: "ov" })); big.querySelector(".ov").innerHTML = I("play", "pi") + I("pause", "pz"); /* shows pause while this card's sample plays */
     const card = h("div", { class: "rcard", "data-k": t.id });
     const leave = (dir, fn) => { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return fn(); card.classList.add(dir); setTimeout(fn, 170); };
     card.append(h("div", { class: "rnav" }, ibtn("prev", "Previous recommendation", () => { S.ui.card[pl.id] = (list[i - 1] || t).id; render(); }, "", { disabled: i === 0 ? true : null }), h("span", { text: `${i + 1} of ${list.length}` }), ibtn("next", "Next recommendation", () => { S.ui.card[pl.id] = (list[i + 1] || t).id; render(); }, "", { disabled: i === list.length - 1 ? true : null })),
-      big, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: artistsOf(t.a) + (t.al ? ` · ${t.al}` : "") }), r.why ? h("div", { class: "why", text: r.why }) : null, tagsFor(t, r),
+      big, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: artistsOf(t.a) + (t.al ? ` · ${t.al}` : "") }), whyText(r.why) ? h("div", { class: "why", text: whyText(r.why) }) : "", tagsFor(t, r), /* the DOM's own append writes null as the word "null" */
       h("div", { class: "decide" }, btn("Reject", "ghost", () => { const n = nextId(); rejectFlow(pl.id, [t.id], () => { S.ui.card[pl.id] = n; }, f => leave("out-l", f)); }, { ic: "x" }),
         btn("Skip", "ghost", () => { S.ui.card[pl.id] = (list[i + 1] || list[0]).id; render(); }),
         btn("Approve", "ok", () => { const n = nextId(); leave("out-r", () => approveFlow(pl.id, [t.id], Core.ORIGIN.MANUAL, () => { S.ui.card[pl.id] = n; })); }, { ic: "check", disabled: full ? true : null })));

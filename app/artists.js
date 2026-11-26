@@ -142,11 +142,23 @@ function aboutOf(g) {
    releases; without Deezer, how many Wikipedias cover them. An exact name counts for a little (about 3× the
    followers), and a result that only matched through another name (an alias, a real name) counts for less. */
 const popularity = g => (g.fans ? Math.log10(g.fans + 1) + .25 * Math.log10((g.albums || 0) + 1) : g.sl ? .8 + 1.3 * Math.log10(g.sl + 1) : 0);
+/* does an artist's name (as a key) match what was typed */
+function namedBy(q) { const k = nn(q), words = String(q).toLowerCase().split(/\s+/).map(nn).filter(Boolean); return n => !!n && (n.includes(k) || k.includes(n) || words.every(w => n.includes(w))); }
 function relevance(q) {
-  const k = nn(q), words = String(q).toLowerCase().split(/\s+/).map(nn).filter(Boolean);
-  const named = n => n.includes(k) || k.includes(n) || words.every(w => n.includes(w));
+  const k = nn(q), named = namedBy(q);
   /* names that match what was typed come first; others (aliases, real names, related artists) follow, most-followed first */
   return g => { const n = nn(g.name); return popularity(g) + (n === k ? .5 : 0) - (named(n) ? 0 : 10); };
+}
+/* Song search results, best first: songs whose title and artists contain every word typed, then by how much they're played
+   (Deezer's rank). Live, remixed, sped-up and other versions go after the originals unless the search asks for one. */
+function songOrder(q, tracks) {
+  const words = Core.norm(q).split(/\s+/).filter(w => w.length > 1), want = new Set(Core.versionTags(q)), k = Core.norm(q);
+  const score = t => { const title = Core.norm(t.t), who = Core.norm(String(t.a || "").replace(/;/g, " ")), all = title + " " + who;
+    const lead = Core.norm(Core.firstArtist(t.a)), covered = words.length && words.every(w => all.includes(w)) ? 2 : 0;
+    const exact = (title === k ? .3 : 0) + (lead && k.includes(lead) ? .3 : 0); /* "daddy yankee gasolina": his Gasolina before someone else's song called that */
+    const extra = Core.versionTags(t.t).filter(v => !want.has(v)).length ? .6 : 0;
+    return covered + exact - extra + Math.min(1, (t.rank || 0) / 1e6); };
+  return tracks.map((t, i) => [t, score(t), i]).sort((a, b) => b[1] - a[1] || a[2] - b[2]).map(x => x[0]);
 }
 /* The quick artist search in the playlist editor: Deezer only, ranked the same way. Artists credited on the top
    matching songs are included too, because Deezer's artist search misses some ("taylor" → no Taylor Swift). */
@@ -156,7 +168,11 @@ async function quick(q, tracks = [], lim = 3) {
   for (const t of tracks) { const ns = String(t.a || "").split(/;\s*/), aid = t.aid || []; if (ns.length !== aid.length) continue;
     aid.forEach((id, i) => { const n = nn(ns[i]); if (!ids.has(id) && (n.includes(k) || k.includes(n))) { ids.add(id); extra.push(id); } }); }
   const more = (await Promise.all(extra.slice(0, 5).map(id => Deezer.artist(id).catch(() => null)))).filter(Boolean);
-  return list.concat(more).sort((a, b) => rel(b) - rel(a)).slice(0, lim);
+  const all = list.concat(more).sort((a, b) => rel(b) - rel(a)), top = all[0];
+  /* tribute acts and empty duplicate profiles ("Bad Bunny" with 56 fans) only show next to a big name when they're real artists too */
+  /* only artists whose name matches what was typed: the playlist editor lists songs right below for everything else */
+  const named = namedBy(q);
+  return all.filter((a, i) => named(nn(a.name)) && (!i || (a.fans || 0) >= 1000 || (a.fans || 0) >= .1 * ((top && top.fans) || 0))).slice(0, lim);
 }
 /* Search Deezer, MusicBrainz and Apple Music together and return one row per real artist. */
 async function find(q, o = {}) {
@@ -236,7 +252,7 @@ async function complete(e0, o = {}) {
 const describe = e => { const o = entry(e); return o ? (o.plain ? "" : o.about) : ""; };
 const sourcesOfEntry = e => { const o = entry(e); return o ? sourcesOf(o) : []; };
 
-const API = { entry, store, nameOf, isLinked, same, add, banSet, banned, featNames, find, link, complete, toEntry, describe, quick, sourcesOf: sourcesOfEntry, fmtFans, _: { relevance, whoOnDeezer, whoOnApple, wdItems, mbUrls, mbFromDeezer } };
+const API = { entry, store, nameOf, isLinked, same, add, banSet, banned, featNames, find, link, complete, toEntry, describe, quick, songOrder, sourcesOf: sourcesOfEntry, fmtFans, _: { relevance, whoOnDeezer, whoOnApple, wdItems, mbUrls, mbFromDeezer } };
 G.Artists = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

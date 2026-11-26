@@ -134,8 +134,8 @@ function vSettings(v) {
     banEditor(S.meta.never, { label: "Artists", onchange: () => act(() => saveMeta(), "Saved.") })));
   const cc = h("select", { "aria-label": "Apple Music store", onchange: e => { S.meta.country = e.target.value; Catalog.SETTINGS.country = e.target.value; saveMeta().catch(() => {}); toast("Saved."); } });
   [["us", "United States"], ["pa", "Panamá"], ["mx", "México"], ["es", "España"], ["co", "Colombia"], ["pr", "Puerto Rico"], ["ar", "Argentina"], ["br", "Brasil"], ["gb", "United Kingdom"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === S.meta.country) o.selected = true; cc.append(o); });
-  const an = h("input", { type: "checkbox", onchange: e => { S.meta.autoNext = e.target.checked; saveMeta().catch(() => {}); } }); an.checked = !!S.meta.autoNext;
-  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Search and samples" }), h("div", { class: "field" }, h("label", { text: "Apple Music store (used when Deezer doesn't have a song)" }), cc), h("label", { class: "chk" }, an, "Play the next sample automatically")));
+  const an = h("input", { type: "checkbox", onchange: e => { S.meta.autoNext = e.target.checked; A.loop = !S.meta.autoNext; saveMeta().catch(() => {}); } }); an.checked = !!S.meta.autoNext;
+  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Search and samples" }), h("div", { class: "field" }, h("label", { text: "Apple Music store (used when Deezer doesn't have a song)" }), cc), h("label", { class: "chk" }, an, "Play the next sample when one ends"), h("p", { class: "small", style: "margin:4px 0 0", text: "Off: a sample repeats until you move on." })));
   const inp = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: e => { const f = e.target.files[0]; if (f) restoreBackup(f); e.target.value = ""; } });
   m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Backup" }), h("p", { class: "lede", text: "Save a copy now and then, or use it to move your playlists to another device. AI keys aren't included." }),
     h("div", { class: "btns" }, btn("Save backup", "", saveBackup, { ic: "dl" }), h("label", { class: "btn ghost", tabindex: "0", onclick: () => inp.click(), onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } } }, "Restore backup"), inp)));
@@ -150,7 +150,7 @@ function vSettings(v) {
   m.append(old);
   m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Start over" }), h("p", { class: "lede", text: "Erases every playlist, decision and key in this browser. Préndete 🔥 is set up again from its saved copy." + (DB.mode === "ls" ? " (This browser is using simpler storage.)" : "") }),
     btn("Erase everything in this browser", "danger", eraseAll, { ic: "trash" })));
-  m.append(h("p", { class: "small", style: "margin-top:20px", text: "Catalog: Deezer, Apple Music, MusicBrainz, Cover Art Archive, ListenBrainz, ReccoBeats. Samples are 30-second previews." }));
+  m.append(h("p", { class: "small", style: "margin-top:20px", text: "Songs and samples from Deezer and Apple Music. Music data from MusicBrainz, ListenBrainz, Discogs, Wikidata, ReccoBeats and LRCLIB." }));
 }
 function saveBackup() {
   const meta = clone(S.meta); delete meta.ai;
@@ -159,12 +159,14 @@ function saveBackup() {
 }
 /* settings from outside this session (a backup, an old save): keep the right types so no screen trips on them */
 function fixMeta(m, defaults = {}) {
-  const o = Object.assign({ v: 3, order: [], never: [], country: "us", autoNext: true, ai: {}, unsorted: [] }, defaults, m && typeof m === "object" && !Array.isArray(m) ? m : {});
+  const o = Object.assign({ v: 3, order: [], never: [], country: "us", autoNext: false, ai: {}, unsorted: [] }, defaults, m && typeof m === "object" && !Array.isArray(m) ? m : {});
   o.order = Array.isArray(o.order) ? o.order.filter(x => typeof x === "string") : [];
   o.never = Array.isArray(o.never) ? o.never : typeof o.never === "string" ? [o.never] : [];
   o.never = o.never.filter(e => (typeof e === "string" && e.trim()) || (e && typeof e === "object" && typeof e.name === "string" && e.name.trim()));
   if (typeof o.country !== "string" || !/^[a-z]{2}$/.test(o.country)) o.country = "us";
-  o.autoNext = o.autoNext !== false && o.autoNext !== "false";
+  /* samples used to move on to the next one by default; now they repeat until you move on (once, for saves from before: loopV) */
+  if (!o.loopV) { o.autoNext = false; o.loopV = 1; }
+  o.autoNext = o.autoNext === true || o.autoNext === "true";
   if (!o.ai || typeof o.ai !== "object" || Array.isArray(o.ai)) o.ai = {};
   o.unsorted = Array.isArray(o.unsorted) ? o.unsorted.filter(x => typeof x === "string") : [];
   return o;
@@ -329,7 +331,7 @@ async function boot() {
     $("#view").replaceChildren(h("main", { class: "wrap" }, h("div", { class: "note err", text: "Couldn't set up the app: " + (e.message || e) + ". Check your connection and try again." }), btn("Try again", "red", () => location.reload())));
     return;
   }
-  S.meta = fixMeta(S.meta, { never: ["DaBaby"] });
+  const wasLoop = S.meta && S.meta.loopV; S.meta = fixMeta(S.meta, { never: ["DaBaby"] }); if (!wasLoop) saveMeta().catch(() => {});
   S.meta.order = S.meta.order.filter(id => S.pls.has(id)).concat([...S.pls.keys()].filter(id => !S.meta.order.includes(id)));
   Catalog.SETTINGS.country = S.meta.country;
   S.route = parseRoute(); render(true);

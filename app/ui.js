@@ -14,7 +14,7 @@ select:"M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-9 14
 done:"M12 2a10 10 0 100 20 10 10 0 000-20zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z",
 undo:"M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z",
 image:"M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z",
-reorder:"M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z",tune:"M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z",open:"M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"};
+reorder:"M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z",updown:"M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z",tune:"M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z",open:"M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"};
 const I = (p, c) => `<svg viewBox="0 0 24 24" aria-hidden="true"${c ? ` class="${c}"` : ""}><path d="${IC[p]}"/></svg>`;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -32,6 +32,8 @@ const fmt = t => { t = Math.max(0, Math.floor(t || 0)); return Math.floor(t / 60
 const https = u => (typeof u === "string" && /^(https:\/\/|data:image\/)/.test(u) ? u : null);
 const artistsOf = a => String(a || "").split(/;\s*/).join(", ");
 const plural = (n, w, p) => `${n} ${n === 1 ? w : p || w + "s"}`;
+/* a song's reason for being suggested; older saves can hold "null" where a reason was missing */
+const whyText = w => String(w || "").replace(/^(null|undefined)(,\s*|$)/, "").trim() || null;
 const meta = t => [artistsOf(t.a), t.al, t.y].filter(Boolean).join(" · ");
 const spLink = t => (t.f && t.f.sp) || "https://open.spotify.com/search/" + encodeURIComponent((t.t + " " + Core.firstArtist(t.a)).trim());
 let toastT = 0;
@@ -150,13 +152,15 @@ function feedbackSheet({ title, lede, verb = "Reject", count = 1 }) {
 
 /* ---------- rows ---------- */
 const Q = {};
+/* a song's cover is its play button, everywhere a song is listed */
+function coverBtn(t, q, ctx) { const cv = h("button", { class: "cov", type: "button", "aria-label": "Play sample of " + t.t, onclick: () => togglePlay(t, q, ctx) }, coverEl(t));
+  const ov = h("span", { class: "ov" }); ov.innerHTML = I("play", "pi") + '<span class="eq"><i></i><i></i><i></i></span>'; cv.append(ov); return cv; }
 function trackRow(t, o = {}) {
   const row = h("div", { class: "row" + (o.sel ? " sel" : ""), "data-k": t.id });
   if (o.sel) { const cb = h("input", { type: "checkbox", class: "ckb", "aria-label": "Select " + t.t }); cb.checked = !!o.sel.checked; cb.onchange = () => o.sel.onchange(cb.checked); row.append(cb); }
-  const cv = h("button", { class: "cov", type: "button", "aria-label": "Play sample of " + t.t }, coverEl(t)); const ov = h("span", { class: "ov" }); ov.innerHTML = I("play", "pi") + '<span class="eq"><i></i><i></i><i></i></span>'; cv.append(ov);
-  cv.onclick = () => togglePlay(t, o.q, o.ctx);
+  const cv = coverBtn(t, o.q, o.ctx);
   const tx = h("div", {}, h("div", { class: "t", text: t.t }), h("div", { class: "m", text: artistsOf(t.a) }));
-  if (o.why) tx.append(h("div", { class: "why", text: o.why }));
+  if (whyText(o.why)) tx.append(h("div", { class: "why", text: whyText(o.why) }));
   if (o.fb) tx.append(h("div", { class: "fb", text: o.fb }));
   const tags = h("div", { class: "tags" }); (o.tags || []).forEach(x => tags.append(x.nodeType ? x : h("span", { class: "tag " + (x.c || ""), text: x.t })));
   if (t.y) tags.append(h("span", { class: "tag", text: String(t.y) })); const ln = langName(t); if (ln) tags.append(h("span", { class: "tag", text: ln }));
@@ -174,23 +178,33 @@ function toCsv(list) { const rows = [["Position", "Track Name", "Artist Name", "
 
 /* ---------- player (30-second samples) ---------- */
 const A = new Audio(); A.preload = "none";
-const P = { q: [], i: -1, k: null, loading: false, seq: 0, retried: null, ctx: null };
+const P = { q: [], i: -1, k: null, loading: false, seq: 0, retried: null, ctx: null, scope: null };
+/* samples belong to the screen they were started on (a playlist's songs, recommendations and rejected count as one screen):
+   leaving it stops the sample and hides the player */
+const scopeOf = r => (r.v === "pl" ? (r.tab === "settings" ? "pls:" : "pl:") + r.id : r.v);
+function stopPlayer() { P.seq++; P.k = null; P.q = []; P.i = -1; P.loading = false; P.scope = null; try { A.pause(); A.removeAttribute("src"); A.load(); } catch {}
+  $("#player").hidden = true; if (!$("#npw").hidden) closeNp(); markRows(); }
 async function sampleUrl(t) {
   if (t.dz) { const fresh = t.prev && t.prevAt && Date.now() - t.prevAt < 3 * 3600e3; if (!fresh) { const n = await Catalog.Deezer.track(t.dz); if (n) { t.prev = n.prev; t.prevAt = Date.now(); if (!t.cov) t.cov = n.cov; } } return t.prev; }
   if (t.prev) return t.prev;
   const r = await Catalog.resolve(t.t, t.a); if (r) { t.prev = r.prev; t.prevAt = Date.now(); if (r.dz && !t.dz) t.dz = r.dz; if (!t.cov) t.cov = r.cov; } return r && r.prev;
 }
-function togglePlay(t, q, ctx) { if (P.k === t.id && !P.loading) { if (A.paused) A.play().catch(playErr); else A.pause(); return; } P.q = (Q[q] || [t.id]).slice(); P.i = Math.max(0, P.q.indexOf(t.id)); if (P.q[P.i] !== t.id) { P.q = [t.id]; P.i = 0; } P.ctx = ctx || null; start(); }
+function togglePlay(t, q, ctx) { if (P.k === t.id && !P.loading) { if (A.paused) A.play().catch(playErr); else A.pause(); return; } P.q = (Q[q] || [t.id]).slice(); P.i = Math.max(0, P.q.indexOf(t.id)); if (P.q[P.i] !== t.id) { P.q = [t.id]; P.i = 0; } P.ctx = ctx || null; P.qk = q || null; P.scope = scopeOf(S.route); start(); }
+/* playing, or about to: a recommendation card that changes while its sample plays hands the sample to the new card */
+const playing = () => !!P.k && (P.loading || !A.paused);
 function start() {
-  const t = getTrack(P.q[P.i]); if (!t) return; if (P.retried && P.retried !== t.id) P.retried = null; P.k = t.id; const seq = ++P.seq; showPlayer(); markRows(); media(t); P.loading = true;
+  const t = getTrack(P.q[P.i]); if (!t) return; if (P.retried && P.retried !== t.id) P.retried = null; P.k = t.id; const seq = ++P.seq; showPlayer(); markRows(); media(t); P.loading = true; A.loop = !S.meta.autoNext; /* a sample repeats until you move on, unless "play the next one" is on */
   try { A.src = SILENT; A.play().catch(() => {}); } catch {}
   sampleUrl(t).then(u => { if (seq !== P.seq) return; P.loading = false; if (!u) { A.pause(); toast("No sample found for this one. Try Spotify ↗"); markRows(); updatePlayBtns(); if (S.meta.autoNext) setTimeout(() => { if (seq === P.seq) next(); }, 1200); return; } A.src = u; A.play().catch(playErr); })
     .catch(() => { if (seq !== P.seq) return; P.loading = false; A.pause(); toast("Couldn't reach the sample. Check your connection."); markRows(); updatePlayBtns(); });
 }
 function playErr(e) { if (e && e.name === "NotAllowedError") toast("Tap play to start the sample."); }
-function next() { if (P.i < P.q.length - 1) { P.i++; start(); } else { A.pause(); toast("End of this list."); } }
-function prev() { if (A.currentTime > 3 || P.i <= 0) { A.currentTime = 0; return; } P.i--; start(); }
-A.addEventListener("ended", () => { if (P.loading) return; if (S.meta.autoNext) next(); else markRows(); });
+/* next/previous from the player while reviewing recommendation cards turns the card too, so the card and the sample match */
+function cardFollows() { const pid = P.qk && P.qk.startsWith("rec:") ? P.qk.slice(4) : null; if (!pid || !(pid in S.ui.card)) return;
+  S.ui.card[pid] = P.k; const r = S.route; if (r.v === "pl" && r.id === pid && r.tab === "recs" && (S.ui.view[pid] || {}).recView !== "list") render(); }
+function next() { if (P.i < P.q.length - 1) { P.i++; start(); cardFollows(); } else { A.pause(); toast("End of this list."); } }
+function prev() { if (A.currentTime > 3 || P.i <= 0) { A.currentTime = 0; return; } P.i--; start(); cardFollows(); }
+A.addEventListener("ended", () => { if (P.loading) return; if (S.meta.autoNext) next(); else { A.currentTime = 0; A.play().catch(() => markRows()); } });
 A.addEventListener("error", () => { if (P.loading || !A.src || A.src.startsWith("data:")) return; const t = getTrack(P.k); if (t && t.dz && P.retried !== t.id) { P.retried = t.id; t.prevAt = 0; start(); return; } toast("This sample couldn't load."); markRows(); updatePlayBtns(); });
 A.addEventListener("play", () => { markRows(); updatePlayBtns(); }); A.addEventListener("pause", () => { markRows(); updatePlayBtns(); });
 let seeking = false;
@@ -206,7 +220,7 @@ function closeNp() { $("#npw").hidden = true; if (npLast && npLast.focus) npLast
 function renderNp() {
   const t = getTrack(P.k); if (!t) return; $("#npcov").replaceChildren(coverEl(t)); $("#npt").textContent = t.t; $("#npm").textContent = meta(t);
   const c = P.ctx && S.pls.get(P.ctx); const r = c && c.rels[t.id];
-  $("#npwhy").textContent = (r && r.why) || ""; $("#npctx").textContent = c ? `${c.name} · ${r ? { APPROVED: "On the playlist", PENDING: "Recommendation", REJECTED: "Rejected" }[r.state] : "Not in this playlist"}` : "";
+  $("#npwhy").textContent = (r && whyText(r.why)) || ""; $("#npctx").textContent = c ? `${c.name} · ${r ? { APPROVED: "On the playlist", PENDING: "Recommendation", REJECTED: "Rejected" }[r.state] : "Not in this playlist"}` : "";
   const acts = $("#npacts"); acts.replaceChildren();
   if (c && r && r.state === "PENDING") acts.append(btn("Reject", "ghost sm", () => { closeNp(); rejectFlow(c.id, [t.id]); }), btn("Approve", "ok sm", () => approveFlow(c.id, [t.id]), { ic: "check" }));
   acts.append(h("a", { class: "lnk", href: spLink(t), target: "_blank", rel: "noopener noreferrer", text: "Open in Spotify ↗", style: "align-self:center" }));
@@ -217,5 +231,5 @@ function initPlayer() {
   $("#popen").onclick = openNp; $("#npw .x").innerHTML = I("x"); $("#npw").addEventListener("click", e => { if (e.target.closest("[data-close]")) closeNp(); });
   $("#nprev").innerHTML = I("prev"); $("#nnext").innerHTML = I("next"); $("#nprev").onclick = prev; $("#nnext").onclick = next; $("#nplay").onclick = () => { if (A.paused) A.play().catch(playErr); else A.pause(); };
   $("#seek").addEventListener("input", e => { seeking = true; $("#tcur").textContent = fmt(+e.target.value); }); $("#seek").addEventListener("change", e => { A.currentTime = +e.target.value; seeking = false; });
-  $("#autonext").onchange = e => { S.meta.autoNext = e.target.checked; saveMeta().catch(() => {}); };
+  $("#autonext").onchange = e => { S.meta.autoNext = e.target.checked; A.loop = !S.meta.autoNext; saveMeta().catch(() => {}); };
 }

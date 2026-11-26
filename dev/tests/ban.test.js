@@ -40,5 +40,15 @@ const order = (q, gs) => gs.slice().sort((a, b) => A._.relevance(q)(b) - A._.rel
 ok("“taylor”: Taylor Swift above artists named just Taylor", order("taylor", [{ name: "Taylor", fans: 4 }, { name: "Tayl'Or", fans: 133 }, { name: "Taylor Swift", fans: 13e6, albums: 40 }, { name: "James Taylor", fans: 138e3 }])[0] === "Taylor Swift");
 ok("“DaBaby”: the rapper first, a similar name below real namesakes", JSON.stringify(order("DaBaby", [{ name: "Fababy", fans: 397e3 }, { name: "Da baby", fans: 7e3 }, { name: "DaBaby", fans: 1.1e6 }])) === JSON.stringify(["DaBaby", "Da baby", "Fababy"]));
 ok("an artist without Deezer followers ranks by Wikipedia coverage", order("x", [{ name: "x a", sl: 0 }, { name: "x b", sl: 80 }])[0] === "x b");
+/* song search order: songs matching every word first, the named artist's own songs before others, originals before other versions, then the most played */
+{ globalThis.Core = globalThis.Core || require(APP + "/core.js");
+  const so = (q, ts) => A.songOrder(q, ts).map(t => t.id);
+  const ts = [{ id: "cover", t: "Daddy Yankee Gasolina", a: "Lee Sang Gul", rank: 400000 }, { id: "live", t: "Gasolina (Live)", a: "Daddy Yankee", rank: 600000 }, { id: "orig", t: "Gasolina", a: "Daddy Yankee", rank: 500000 }, { id: "other", t: "Fantasmas", a: "HUMBE", rank: 900000 }];
+  ok("named artist's original first", so("daddy yankee gasolina", ts)[0] === "orig", so("daddy yankee gasolina", ts));
+  ok("a live version after the original", so("daddy yankee gasolina", ts).indexOf("live") > so("daddy yankee gasolina", ts).indexOf("orig"));
+  ok("songs that don't match every word come last, however popular", so("daddy yankee gasolina", ts).slice(-1)[0] === "other");
+  ok("a live version is fine when asked for", so("gasolina live", ts)[0] === "live", so("gasolina live", ts));
+  const pop = [{ id: "a", t: "New One", a: "Bad Bunny", rank: 700000 }, { id: "b", t: "Big Hit", a: "Bad Bunny", rank: 980000 }];
+  ok("the most played first among equals", so("bad bunny", pop)[0] === "b"); }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

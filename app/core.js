@@ -194,6 +194,12 @@ function reorder(pl, id, toIndex) {
   const i = pl.order.indexOf(id); if (i < 0) throw new OpError("STATE", "Only songs on the playlist can be moved.");
   pl.order.splice(i, 1); pl.order.splice(Math.max(0, Math.min(toIndex, pl.order.length)), 0, id); pl.updatedAt = now();
 }
+/* a whole new order (arranging while the list is sorted saves what's on screen): the same songs, rearranged */
+function setOrder(pl, ids) {
+  const a = [...pl.order].sort(), b = [...ids].sort();
+  if (a.length !== b.length || a.some((x, i) => x !== b[i])) throw new OpError("STATE", "The playlist changed. Try again.");
+  pl.order = ids.slice(); pl.updatedAt = now();
+}
 function editDirection(pl, direction, { reset = false } = {}) {
   pl.direction = direction;
   if (reset) {
@@ -259,7 +265,7 @@ function evidence(pl, getTrack) {
 }
 
 const API = { sleep, expOf, nameKey: s => norm(s).replace(/\s+/g, ""), checkShape, checkTrack, CONFIG, capacityOptions, S, ORIGIN, MANUAL_ORIGINS, REASONS, OpError, uid, norm, firstArtist, versionTags, baseTitle, explicitClass, sameRecording, isrcYear,
-  createPlaylist, counts, stateOf, idsIn, findDuplicate, addMandatory, approve, reject, restore, confirmKeep, appendCandidates, fillCommit, setCapacity, setStatus, reorder, editDirection, validate, evidence, log };
+  createPlaylist, counts, stateOf, idsIn, findDuplicate, addMandatory, approve, reject, restore, confirmKeep, appendCandidates, fillCommit, setCapacity, setStatus, reorder, setOrder, editDirection, validate, evidence, log };
 G.Core = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);
