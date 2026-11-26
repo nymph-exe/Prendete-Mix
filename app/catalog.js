@@ -13,7 +13,8 @@ function memo(key, max = 6000) {
   const save = () => { if (!ls || tm) return; tm = setTimeout(() => { tm = null; try { ls.setItem(key, JSON.stringify([...m].slice(-max))); } catch {} }, 2500); };
   return { get: k => load().get(k), set: (k, v) => { load().delete(k); load().set(k, v); save(); } };
 }
-const LANGS = memo("mixer-langs"), YEARS = memo("mixer-years"), MBIDS = memo("mixer-mbids");
+/* "-2": languages found by franc; the word-list answers stored before it are dropped */
+const LANGS = memo("mixer-langs-2"), YEARS = memo("mixer-years"), MBIDS = memo("mixer-mbids");
 const sleep = Core.sleep;
 const https = u => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
 function pacer(perSec) { let next = 0; const gap = 1000 / perSec; return async fn => { const now = Date.now(); const at = Math.max(now, next); next = at + gap; if (at > now) await sleep(at - now); return fn(); }; }
@@ -144,6 +145,23 @@ const MusicBrainz = {
         isrc: (r.isrcs || [])[0] || null, exp: "", dur: Math.round((r.length || 0) / 1000), rank: 0, cov: rg ? `https://coverartarchive.org/release-group/${rg}/front-250` : null, prev: null, link: `https://musicbrainz.org/recording/${r.id}` }; });
   }
 };
+/* Artists listeners keep together: built ahead of time from the ListenBrainz statistics dump (CC0; dev/tools/lbsim.py),
+   in 256 files under data/similar/ keyed by a hash of the name, so a lookup loads one ~150 KB file and no request
+   goes to ListenBrainz or MusicBrainz. Covers about 90,000 artists that 8 or more listeners keep in their top 300. */
+const simKey = name => String(name || "").toLowerCase().normalize("NFKD").replace(/\p{Mn}/gu, "").replace(/&/g, "and").replace(/[^\p{L}\p{N}$]/gu, "");
+const simShard = k => { let h = 0x811c9dc5; for (const b of new TextEncoder().encode(k)) h = Math.imul(h ^ b, 0x01000193) >>> 0; return h % 256; };
+const SIM_FILES = new Map();
+const Similar = {
+  key: simKey, shard: simShard,
+  /* → { name, listeners, mbid, similar: [{ name, score }] } or null */
+  async of(name, limit = 16) {
+    const k = simKey(name); if (!k) return null; const n = simShard(k), file = n.toString(16).padStart(2, "0") + ".json";
+    let f = SIM_FILES.get(n);
+    if (!f) { f = (BROWSER ? fetch("data/similar/" + file).then(r => (r.ok ? r.json() : {}))
+      : Promise.resolve().then(() => JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "../data/similar", file), "utf8")))).catch(() => ({})); SIM_FILES.set(n, f); }
+    const e = (await f)[k]; return e ? { name: e[0], listeners: e[1], mbid: e[3] || null, similar: e[2].slice(0, limit).map(([nm, score]) => ({ name: nm, score })) } : null;
+  }
+};
 const lbLimit = pacer(3);
 const ListenBrainz = {
   ALG: "session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30",
@@ -228,11 +246,17 @@ const LB = {
 const dgLimit = paced(pacer(.4));
 const Discogs = {
   /* an artist's styles across their releases → {style: weight} (styles count fully, broad genres half) */
+  /* albums ("masters") first; artists whose records were never grouped into albums (lots of regional music) only have releases.
+     "Samy Y Sandra*" is Discogs writing a name the way that record credits it, so a starred name may be the shorter one */
   async styles(name) {
-    const d = await dgLimit(() => getJSON(`https://api.discogs.com/database/search?artist=${encodeURIComponent(name)}&type=master&per_page=20`, {}, 15000));
-    const out = {}; let n = 0;
-    for (const r of (d && d.results) || []) { const t = String(r.title || ""); const who = t.split(" - ")[0]; if (mnorm(who) !== mnorm(name) && !mnorm(who).startsWith(mnorm(name))) continue; n++;
-      for (const s of r.style || []) out[s.toLowerCase()] = (out[s.toLowerCase()] || 0) + 1; for (const g of r.genre || []) out[g.toLowerCase()] = (out[g.toLowerCase()] || 0) + .5; }
+    const want = mnorm(name), out = {}; let n = 0;
+    for (const type of ["master", "release"]) {
+      const d = await dgLimit(() => getJSON(`https://api.discogs.com/database/search?artist=${encodeURIComponent(name)}&type=${type}&per_page=20`, {}, 15000));
+      for (const r of (d && d.results) || []) { const raw = String(r.title || "").split(" - ")[0], who = mnorm(raw.replace(/\*$/, "").replace(/\s*\(\d+\)$/, ""));
+        if (who !== want && !who.startsWith(want) && !(raw.endsWith("*") && who.length >= 4 && want.startsWith(who))) continue; n++;
+        for (const s of r.style || []) out[s.toLowerCase()] = (out[s.toLowerCase()] || 0) + 1; for (const g of r.genre || []) out[g.toLowerCase()] = (out[g.toLowerCase()] || 0) + .5; }
+      if (n) break;
+    }
     return n ? out : null;
   }
 };
@@ -308,7 +332,7 @@ const LRCLIB = {
     } catch { return undefined; }
   }
 };
-const LANG_NAMES = { es: "Spanish", en: "English", pt: "Portuguese", fr: "French", it: "Italian", de: "German", ko: "Korean", ja: "Japanese", zh: "Chinese", ru: "Russian", ar: "Arabic", hi: "Hindi" };
+const LANG_NAMES = { es: "Spanish", en: "English", pt: "Portuguese", fr: "French", it: "Italian", de: "German", ko: "Korean", ja: "Japanese", zh: "Chinese", ru: "Russian", ar: "Arabic", hi: "Hindi", tr: "Turkish", nl: "Dutch", ca: "Catalan", id: "Indonesian", tl: "Tagalog", pl: "Polish", ro: "Romanian", sv: "Swedish", el: "Greek", he: "Hebrew", th: "Thai", vi: "Vietnamese" };
 const SW = {
   en: "the and you i my your it is on that this with for we be are what all just like got know when but now up get go she he they do don't can't i'm it's you're to of out down back never need how time way gonna wanna gotta tonight feel make let love night think tell see say only ever where why who been have has had would could should because about over into them their there these those our ain't i'll i've",
   es: "el los las y pero yo tú tu eres estoy quiero mi muy porque cuando también ahora aquí mucho bien voy ella él nosotros conmigo contigo otra vez bebé noche corazón hoy siempre tengo hace hacer puedo dime mami pa' perreo baila dale ya sola sin con una lo le del al ese esa esto eso así más qué cómo dónde quieres tienes sabes tus mis sus están hay fue vamos mujer calle fiesta mientras después antes nadie nunca todo de la que en me te se no",
@@ -319,7 +343,27 @@ const SW = {
 };
 const SWI = new Map(); for (const [l, ws] of Object.entries(SW)) for (const w of ws.split(" ")) { if (!SWI.has(w)) SWI.set(w, []); SWI.get(w).push(l); }
 /* Script share for non-Latin alphabets + function-word frequency for Latin ones. Returns null when there's too little text. */
+/* Lyrics language. franc (vendor/franc.min.js, MIT) reads the lyrics a few lines at a time and each part votes by its length;
+   a close call between Spanish, Portuguese, Catalan, Italian or French goes to the word lists below. On 72 songs in 12 languages
+   with known languages, franc got the main language right for 69, the word lists alone for 64 (Turkish, Dutch, Catalan and
+   Indonesian were the misses). Without franc loaded, the word lists answer alone. */
+const ISO3 = { spa: "es", eng: "en", por: "pt", fra: "fr", ita: "it", deu: "de", kor: "ko", jpn: "ja", cmn: "zh", rus: "ru", arb: "ar", hin: "hi", tur: "tr", nld: "nl", pol: "pl", swe: "sv", cat: "ca", ron: "ro", ind: "id", tgl: "tl", vie: "vi", tha: "th", heb: "he", ell: "el", ukr: "uk", ces: "cs", hun: "hu", fin: "fi", dan: "da", nob: "no", yor: "yo", hau: "ha", zul: "zu", swh: "sw", jav: "jv", ben: "bn", urd: "ur", pan: "pa", tam: "ta", tel: "te", fas: "fa", zlm: "ms", hat: "ht", pcm: "pcm" };
+const ISO3_ONLY = Object.keys(ISO3), ROMANCE = new Set(["spa", "por", "cat", "ita", "fra"]);
 function detectLang(text) {
+  const F = G.Franc || (!BROWSER && typeof require !== "undefined" ? (() => { try { require("../vendor/franc.min.js"); } catch {} return G.Franc; })() : null); if (!F) return wordLang(text);
+  /* franc needs room: under 300 characters the word lists are surer. A long line is cut at its commas and stops */
+  const raw = String(text || ""); if (raw.replace(/\s+/g, " ").trim().length < 300) return wordLang(text);
+  const lines = raw.split(/\n+/).flatMap(l => (l.length > 220 ? l.split(/(?<=[,.;!?])\s+/) : [l])).map(x => x.trim()).filter(Boolean); if (!lines.length) return null;
+  const parts = []; let cur = ""; for (const l of lines) { cur += (cur ? " " : "") + l; if (cur.length >= 220) { parts.push(cur); cur = ""; } } if (cur.length >= 60 || !parts.length) parts.push(cur); /* about 4 lines each */
+  const votes = {}; let total = 0;
+  for (const c of parts) { const all = F.francAll(c, { only: ISO3_ONLY, minLength: 20 }); if (!all.length || all[0][0] === "und") continue;
+    let top = all[0][0]; if (ROMANCE.has(top) && all[1] && ROMANCE.has(all[1][0]) && all[0][1] - all[1][1] < .04) { const w = wordLang(c); const k = w && ISO3_ONLY.find(x => ISO3[x] === w.main); if (k === all[0][0] || k === all[1][0]) top = k; }
+    votes[top] = (votes[top] || 0) + c.length; total += c.length; }
+  if (!total) return wordLang(text);
+  const ranked = Object.entries(votes).sort((a, b) => b[1] - a[1]);
+  return { main: ISO3[ranked[0][0]], langs: ranked.filter(([, v]) => v / total >= .2).slice(0, 3).map(([k]) => ISO3[k]), conf: ranked[0][1] / total };
+}
+function wordLang(text) {
   const s = String(text || ""); const cnt = re => (s.match(re) || []).length;
   const sc = { ko: cnt(/[\uac00-\ud7af\u1100-\u11ff]/g), kana: cnt(/[\u3040-\u30ff]/g), han: cnt(/[\u4e00-\u9fff]/g), ru: cnt(/[\u0400-\u04ff]/g), ar: cnt(/[\u0600-\u06ff]/g), hi: cnt(/[\u0900-\u097f]/g) };
   const latin = cnt(/[a-zà-ÿ]/gi); const share = {};
@@ -371,7 +415,7 @@ function guessLang(title, lettersOnly) {
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];
 }
 
-const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, LB, Discogs, Wikidata, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
+const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, Similar, LB, Discogs, Wikidata, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
 G.Catalog = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);

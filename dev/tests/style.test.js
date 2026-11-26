@@ -8,6 +8,12 @@ ok("broader generic tag is weak", E.tagSim("indie folk", "indie") <= .65);
 ok("same family", E.tagSim("afrobeats", "amapiano") >= .6);
 ok("k-pop is not pop", E.tagSim("k-pop", "pop") === 0, E.tagSim("k-pop", "pop"));
 ok("ranchera is not corrido tumbado", E.tagSim("corrido tumbado", "ranchera") === 0);
+/* the MusicBrainz genre tree (data/genretree.js) */
+ok("a subgenre fits its parent (jazz rap is hip hop)", E.tagSim("hip hop", "jazz rap") >= .8, E.tagSim("hip hop", "jazz rap"));
+ok("but not the genre that only influenced it (jazz)", E.tagSim("jazz", "jazz rap") < .5, E.tagSim("jazz", "jazz rap"));
+ok("cubatón is reggaeton", E.tagSim("reggaeton", "cubatón") >= .8, E.tagSim("reggaeton", "cubatón"));
+ok("other spellings are the same genre (latin trap, trap latino)", E.tagSim("latin trap", "trap latino") >= .9, E.tagSim("latin trap", "trap latino"));
+ok("siblings under a huge parent are not close (techno, house)", E.tagSim("techno", "house") === 0, E.tagSim("techno", "house"));
 ok("named styles map to genre names", JSON.stringify(E.wantStyles({ keywords: ["synthpop", "new wave"] })) === JSON.stringify(["synth-pop", "new wave"]), E.wantStyles({ keywords: ["synthpop", "new wave"] }));
 ok("lofi means lo-fi hip hop", E.wantStyles({ keywords: ["lofi"] })[0] === "lo-fi hip hop");
 ok("plural styles", E.wantStyles({ keywords: ["corridos tumbados"] })[0] === "corrido tumbado", E.wantStyles({ keywords: ["corridos tumbados"] }));

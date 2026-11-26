@@ -358,6 +358,27 @@ const DZ_TAGS = { "Rap/Hip Hop": ["hip hop", "rap", "trap"], Pop: ["pop"], "R&B"
   "Latin Music": ["latin", "reggaeton", "latin pop"], Alternative: ["alternative rock", "indie"], Rock: ["rock"], Folk: ["folk"], "African Music": ["afrobeats", "afropop", "amapiano"],
   "Asian Music": ["k-pop", "j-pop", "c-pop"], "Traditional Mexicano": ["regional mexicano", "corrido", "norteño", "banda"], Reggae: ["reggae", "dancehall"], Jazz: ["jazz"], Classical: ["classical"],
   "Soul & Funk": ["soul", "funk"], Metal: ["metal"], Country: ["country"], Blues: ["blues"], "Brazilian Music": ["mpb", "funk carioca", "sertanejo", "bossa nova"], "Films/Games": ["soundtrack"] };
+/* MusicBrainz's genre family tree (data/genretree.js, built by dev/tools/genretree.py): which genres are subgenres of which,
+   and which began as a fusion of others. It knows "jazz rap" is hip hop and "cubatón" is reggaeton, which the words alone don't say */
+const GT = G.GENRE_TREE || (typeof require !== "undefined" ? (() => { try { return require("../data/genretree.js"); } catch { return null; } })() : null);
+let GTM = null;
+const gtMaps = () => { if (GTM || !GT) return GTM; const up = new Map(), fus = new Map(), alias = new Map(), add = (m, k, v) => { if (!k || !v || k === v) return; if (!m.has(k)) m.set(k, new Set()); m.get(k).add(v); };
+  for (const [a, g] of Object.entries(GT.a || {})) if (skey(a) && skey(g) && skey(a) !== skey(g)) alias.set(skey(a), skey(g));
+  const canon = k => alias.get(k) || k;
+  for (const [c, ps] of Object.entries(GT.p || {})) for (const x of ps) add(up, canon(skey(c)), canon(skey(x)));
+  for (const [c, ps] of Object.entries(GT.f || {})) for (const x of ps) add(fus, canon(skey(c)), canon(skey(x)));
+  const kids = new Map(); for (const ps of up.values()) for (const x of ps) kids.set(x, (kids.get(x) || 0) + 1);
+  return (GTM = { up, fus, canon, kids }); };
+/* how many steps up the tree from genre k to genre to (0 when it isn't above it), at most 3 */
+const stepsUp = (M, k, to) => { let lvl = new Set([k]); const seen = new Set(lvl); for (let d = 1; d <= 3; d++) { const nx = new Set(); for (const x of lvl) for (const y of M.up.get(x) || []) { if (y === to) return d; if (!seen.has(y)) { seen.add(y); nx.add(y); } } if (!nx.size) break; lvl = nx; } return 0; };
+function treeSim(pk, ak) {
+  const M = gtMaps(); if (!M) return 0; pk = M.canon(pk); ak = M.canon(ak); if (pk === ak) return .95;
+  let d = stepsUp(M, ak, pk); if (d) return [.8, .7, .6][d - 1];                     /* the artist plays a kind of what was asked */
+  if ((M.fus.get(ak) || new Set()).has(pk)) return .6;                                 /* began as a mix of what was asked and something else */
+  d = stepsUp(M, pk, ak); if (d) return GENERIC.has(ak) ? 0 : [.5, .35, .25][d - 1];   /* broader than what was asked ("pop" alone doesn't make an artist k-pop) */
+  for (const x of M.up.get(pk) || []) if (!GENERIC.has(x) && M.kids.get(x) <= 20 && (M.up.get(ak) || new Set()).has(x)) return .45; /* two kinds of the same narrow style ("uk drill", "brooklyn drill") */
+  return 0;
+}
 const SIMC = new Map();
 function tagSim(p, a) {
   const pk = skey(p), ak = skey(a); if (!pk || !ak) return 0; if (pk === ak) return 1;
@@ -366,6 +387,7 @@ function tagSim(p, a) {
   if (pt.length && pt.every(x => at.includes(x))) s = at[at.length - 1] === pt[pt.length - 1] ? .9 : .4; /* a narrower kind of what was asked ("drill" → "uk drill"), but "jazz rap" is rap, not jazz */
   else if (at.length && at.every(x => pt.includes(x))) s = at.length === 1 && GENERIC.has(at[0]) ? .3 : .5; /* broader */
   if (FAMILIES.some(f => f.has(pk) && f.has(ak))) s = Math.max(s, .65);
+  s = Math.max(s, treeSim(pk, ak));
   SIMC.set(ck, s); return s;
 }
 /* ---------- the scene map (scenes.js): who defines each scene, by Deezer artist ID ---------- */
@@ -457,6 +479,28 @@ async function discogsFill(list, budget) {
     const prev = ART.get(x.id) || {}; ART.set(x.id, Object.assign({}, prev, { v: st ? vecOf(st) : null, dg: 1, at: Date.now() })); }));
   artSave();
 }
+/* Sound (app/sound.js): for artists no tag source knows at all, the Discogs styles their preview sounds like. Runs in the
+   browser only, a few songs per run (about a second each once the model is loaded). Language-dependent labels ("Latin",
+   "Electronic---Latin") aren't taken from sound alone: the song's language is checked from its lyrics as usual. */
+const SOUND_SKIP = /^(latin|electronic---latin|pop---ballad|non-music|children's|stage & screen|brass & military|folk, world, & country)$/i;
+function soundTags(top) { const tags = {};
+  for (const { genre, style, p } of top || []) { if (p < .08) continue; const full = `${genre}---${style}`;
+    if (SOUND_SKIP.test(full)) continue; const st = style.toLowerCase().replace("rnb/swing", "r&b").replace(/\s*\/\s*/g, " ");
+    tags[st] = Math.max(tags[st] || 0, p); const g = genre.toLowerCase(); if (!SOUND_SKIP.test(g) && !/^(folk, world, & country|funk \/ soul)$/.test(g)) tags[g] = Math.max(tags[g] || 0, p * .5);
+    if (g === "funk / soul") tags.soul = Math.max(tags.soul || 0, p * .5); }
+  return Object.keys(tags).length ? tags : null; }
+async function soundFill(list, budget) {
+  const S2 = G.Sound; if (!S2 || !budget || budget.n <= 0) return;
+  const todo = []; for (const x of list) { const a = ART.get(x.id); if (!x.id || !x.prev || (a && (a.v || a.snd))) continue; if (todo.length >= budget.n) break; todo.push(x); }
+  budget.n -= todo.length; if (!todo.length) return;
+  if (S2.ready) try { await S2.ready(); } catch { budget.n = 0; return; } /* the model didn't load: no more tries this run */
+  for (const x of todo) { let top = null;
+    /* preview links stop working after a while: a starting song saved earlier gets a fresh one */
+    if (x.dz && (!x.prevAt || Date.now() - x.prevAt > 30 * 60e3)) { const t = await Deezer.track(x.dz).catch(() => null); if (t && t.prev) x.prev = t.prev; }
+    try { top = await S2.fromUrl(x.prev, 8); } catch { continue; }
+    const tags = soundTags(top); const prev = ART.get(x.id) || {}; ART.set(x.id, Object.assign({}, prev, { v: tags ? vecOf(tags) : prev.v || null, snd: 1, at: Date.now() })); }
+  artSave();
+}
 /* which scenes this playlist is about: named styles, reference artists, and (for long histories) where its approvals live */
 const REGION = [[/\b(chilean|chileno|spanish|espa(n|ñ)ol|mexican[oa]?|argentin[eao]|latin[oa]?|colombian[oa]?|puerto ?rican|dominican[oa]?|cuban[oa]?)\b/, "es"], [/\b(brazilian|brasileir[oa]|portugu[eê]s)\b/, "pt"], [/\b(french|fran(c|ç)ais[e]?|chanson|vari(e|é)t(e|é))\b/, "fr"], [/\b(korean|k-|khh)/, "ko"], [/\b(japanese|j-|anime|anisong|vocaloid|visual kei)/, "ja"], [/\b(german|deutsch\w*|schlager|austropop|ndw)\b/, "de"], [/\b(italian[oa]?|cantautori|canzone)\b/, "it"], [/\b(uk|british|london)\b/, "uk"],
   [/\b(arab(ic)?|khaleeji|egyptian|levantine|mahraganat|maghreb\w*|algerian|moroccan)\b/, "ar"], [/\b(turkish|t(u|ü)rk\w*|anadolu)\b/, "tr"], [/\b(c-pop|mandopop|cantopop|chinese|taiwanese|hong kong)\b/, "zh"],
@@ -529,6 +573,9 @@ async function styleProfile(P, ctx, say) {
   const poolS = P.pool.slice(0, 160);
   if (sample.length || want.length || broad.length) { say && say("Reading genre tags…"); await stylesFor(sample.map(x => x[0]).concat(poolS)); }
   P.dgBudget = { n: 4 }; /* Discogs allows one request every 2.5 s without a key: a few per run */
+  /* starting songs whose artists no source knows: what they sound like (Sound), before the playlist's taste is set */
+  P.sndBudget = { n: 4 }; const thinSeeds = sample.map(x => x[0]).filter(t => (t.aid || [])[0] && t.prev && !((ART.get(t.aid[0]) || {}).v)).slice(0, 3);
+  if (thinSeeds.length && G.Sound) { say && say("Listening to songs no database knows yet…"); await soundFill(thinSeeds.map(t => ({ id: t.aid[0], name: Core.firstArtist(t.a), prev: t.prev, dz: t.dz, prevAt: t.prevAt })), P.sndBudget).catch(() => {}); }
   if (want.length) { const unk = [...P.W.values()].filter(c => { const a = ART.get(c.id); return a && !a.v; }).sort((a, b) => b.w - a.w).slice(0, 4).map(c => ({ id: c.id, name: c.name }));
     discogsFill(unk, P.dgBudget).catch(() => {}); /* not awaited: later checks pick the answers up */ }
   const T = new Map(); let tw = 0;
@@ -658,9 +705,13 @@ async function classicRun(ctx, opt) {
   say("Exploring artists near your picks…");
   const relJob = Promise.all(seeds.map(async s => { if (stop()) return; try { (await Deezer.related(s.id, 20)).forEach((a, rank) => addC(a.id, a.name, s.ws * (P.ev.manual.length >= 50 && !S.strict ? .6 : 1) / (1 + rank * .12), s.name, "related", seedSF(s), null, a.fans)); } catch { fails++; } }));
   // listeners' habits (ListenBrainz): artists played alongside the seeds, and songs played alongside the seed songs
-  const lbJob = Promise.all(seeds.slice(0, seeds.length >= 16 ? 8 : 4).map(async s => { if (stop()) return;
-    const mbid = (ART.get(s.id) || {}).mb || await MusicBrainz.artistMbid(s.name).catch(() => null); if (!mbid) return;
-    const sim = await ListenBrainz.similar(mbid, 12).catch(() => []); const max = Math.max(1, ...sim.map(x => x.score));
+  /* first the table built from ListenBrainz's listening data (no requests, so every seed can use it); the live similar-artists
+     service only for seeds the table doesn't have. A table entry under the same name but another MusicBrainz ID is someone else */
+  const lbJob = Promise.all(seeds.slice(0, 16).map(async (s, i) => { if (stop()) return;
+    const known = (ART.get(s.id) || {}).mb, off = Cat.Similar ? await Cat.Similar.of(s.name, i < 8 ? 14 : 6).catch(() => null) : null; /* each name is a Deezer look-up: fewer for later seeds */
+    let sim = off && (!known || !off.mbid || off.mbid === known) ? off.similar : null;
+    if (!sim) { if (i >= (seeds.length >= 16 ? 8 : 4)) return; const mbid = known || await MusicBrainz.artistMbid(s.name).catch(() => null); if (!mbid) return; sim = await ListenBrainz.similar(mbid, 12).catch(() => []); }
+    const max = Math.max(...sim.map(x => x.score), 1e-6);
     await Promise.all(sim.map(async x => { if (stop() || P.avoid.has(Core.norm(x.name))) return; try { const a = await idByName(x.name); if (a) addC(a.id, a.name, s.ws * .8 * (x.score / max), s.name, "lb", seedSF(s), null, a.fans); } catch {} }));
   })).catch(() => {});
   const recJob = (async () => {
@@ -826,6 +877,8 @@ async function classicRun(ctx, opt) {
     const ready = Promise.all(group.map(c => (c.pool ? Promise.resolve(c.tracks) : Deezer.top(c.id, P.R.avoidHits ? 25 : 10).then(deep).catch(() => { fails++; return []; }))))
       .then(async tops => { group.forEach((c, k) => { if (!c.pool) titleLang(c.id, tops[k]); }); await stylesFor(tops.flatMap((tr, k) => (group[k].pool ? tr : tr.slice(0, 6))));
         if (S.strict) await discogsFill(group.filter(c => !c.pool && (ART.get(c.id) || {}).v === null).sort((a, b) => (trustedC(b) - trustedC(a)) || b.score - a.score).slice(0, 1).map(c => ({ id: c.id, name: c.name })), P.dgBudget);
+        if (S.strict && G.Sound) await soundFill(group.map((c, k) => ({ c, t: (tops[k] || [])[0] })).filter(({ c, t }) => !c.pool && t && t.prev && (ART.get(c.id) || {}).v === null && (ART.get(c.id) || {}).dg)
+          .sort((a, b) => (trustedC(b.c) - trustedC(a.c)) || b.c.score - a.c.score).slice(0, 1).map(({ c, t }) => ({ id: c.id, name: c.name, prev: t.prev })), P.sndBudget).catch(() => {});
         return tops; });
     ready.catch(() => {}); return { group, ready }; };
   let nextG = prep(0);
@@ -1184,7 +1237,7 @@ async function applyReading(j, st, o = {}) {
   return { summary: j.summary || "", missing: [...new Set(missing)], unchecked: [...new Set(unchecked)] };
 }
 
-const API = { partsOf, pseudoArtist, workingModel, applyReading, cleanReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
+const API = { partsOf, pseudoArtist, soundTags, workingModel, applyReading, cleanReading, Classic, styleProfile, styleFit, stylesFor, MBQ, scenesFor, kbOf, wantStyles, tagSim, ART, AI, PROVIDERS, MOODS, ENERGY, TEMPO, rules, eligible, blocked, langVerdict, buildProfile, fitOf, directionBlock, stateBlock, parseJSON, featuresFor, langsFor, vibe, reasonsOf };
 G.Engines = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);
