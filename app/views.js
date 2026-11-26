@@ -14,7 +14,9 @@ const routeKey = r => r.v + (r.id ? ":" + r.id + ":" + r.tab : "");
 function go(hash) { if (location.hash === hash) render(true); else location.hash = hash; }
 window.addEventListener("hashchange", () => { S.ui.scroll[routeKey(S.route)] = scrollY; S.route = parseRoute(); render(true); });
 function render(nav) {
+  if (S.ui.dragging) { S.ui.pendingRender = true; return; } /* a playlist is being moved on the home screen: redraw after it's dropped */
   const r = S.route, v = $("#view"); const y = nav ? S.ui.scroll[routeKey(r)] || 0 : scrollY;
+  if (r.v !== "home") S.ui.homeEdit = false;
   if (P.k && P.scope && scopeOf(r) !== P.scope) stopPlayer();
   v.replaceChildren();
   if (r.v === "new") vNew(v); else if (r.v === "settings") vSettings(v); else if (r.v === "pl") vPlaylist(v, r); else vHome(v);
@@ -52,7 +54,10 @@ function vHome(v) {
   const nIn = all.filter(p => p.status === "IN_PROGRESS").length, nDone = all.length - nIn;
   setTop("MIXER", null, null); /* the filter chips below already count playlists by status */
   const m = h("main", { class: "wrap" }); v.append(m);
-  m.append(h("div", { class: "btns", style: "margin-top:14px" }, btn("Create a playlist", "red", () => { S.create = null; go("#/new"); }, { ic: "plus" })));
+  const editing = !!S.ui.homeEdit;
+  const createRow = h("div", { class: "btns", style: "margin-top:14px", hidden: editing ? true : null }, btn("Create a playlist", "red", () => { S.create = null; go("#/new"); }, { ic: "plus" }));
+  const editBar = h("div", { class: "editbar", hidden: editing ? null : true }, h("p", { text: "Drag to reorder. Tap a playlist to change its cover, rename it or delete it." }), btn("Done", "red sm", () => homeEditing(false)));
+  m.append(createRow, editBar);
   if (S.meta.migrated && !S.meta.migrated.seen) {
     const r = S.meta.migrated.report;
     m.append(h("div", { class: "note" }, h("b", { text: "Préndete 🔥 moved into the new app. " }), `${plural(r.approved, "song")} on the playlist, ${r.rejected} rejected, ${plural(r.pending, "recommendation")}${r.lists ? `, plus ${plural(r.lists, "other playlist")}` : ""}. It's marked Completed; you can reopen it any time.`,
@@ -64,11 +69,92 @@ function vHome(v) {
     h("button", { class: "chip", type: "button", "aria-pressed": String(f === k), onclick: () => { S.ui.homeF = k; render(); } }, l, h("span", { class: "n", text: n })))));
   const list = all.filter(p => f === "all" || p.status === f);
   if (!list.length) m.append(h("p", { class: "empty", text: all.length ? "No playlists with this status." : "No playlists yet. Create one to start." }));
-  const g = h("div", { class: "pls" });
+  const g = h("div", { class: "pls" + (editing ? " editing" : "") });
   for (const pl of list) { const c = Core.counts(pl); const ds = dirSummary(pl);
-    g.append(h("a", { class: "pl", href: "#/p/" + encodeURIComponent(pl.id) }, mosaic(pl), h("div", { class: "nm", text: pl.name }), statusPill(pl),
-      h("div", { class: "ct", text: `${plural(c.approved, "song")}${c.pending ? `, ${c.pending} waiting` : ""}` }), h("div", { class: "ct", text: ds.slice(0, 72) + (ds.length > 72 ? "…" : "") }))); }
+    const edb = h("span", { class: "edb", "aria-hidden": "true" }); edb.innerHTML = I("edit");
+    g.append(h("a", { class: "pl", href: "#/p/" + encodeURIComponent(pl.id), "data-id": pl.id, draggable: "false" }, h("div", { class: "jig" }, mosaic(pl), edb, h("div", { class: "nm", text: pl.name }), statusPill(pl),
+      h("div", { class: "ct", text: `${plural(c.approved, "song")}${c.pending ? `, ${c.pending} waiting` : ""}` }), h("div", { class: "ct", text: ds.slice(0, 72) + (ds.length > 72 ? "…" : "") })))); }
   m.append(g);
+  homeGestures(g, list.map(p => p.id), { createRow, editBar });
+}
+/* ---------- home edit mode: hold a playlist and they all shake, like apps on a phone's home screen. Keep holding and drag to
+   reorder; let go and tap one to change its cover, rename or delete it. Done (or Escape, or a tap on empty space) ends it. ---------- */
+let homeUi = null;
+function homeEditing(on) {
+  S.ui.homeEdit = !!on; if (!homeUi) return;
+  homeUi.grid.classList.toggle("editing", !!on); homeUi.createRow.hidden = !!on; homeUi.editBar.hidden = !on;
+  if (on && navigator.vibrate) try { navigator.vibrate(12); } catch {}
+}
+function homeGestures(grid, ids, parts) {
+  homeUi = Object.assign({ grid }, parts);
+  let press = null, drag = null, swallow = false, raf = 0;
+  const cards = () => [...grid.querySelectorAll(".pl")];
+  const cancelPress = () => { if (press) { clearTimeout(press.timer); press = null; } };
+  /* grid-relative position of the pointer (offsetLeft/Top ignore transforms, so a card's slot is always known) */
+  const at = e => { const r = grid.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const place = () => { if (!drag) return; const el = drag.el; el.style.transform = `translate(${drag.px - drag.gx - el.offsetLeft}px,${drag.py - drag.gy - el.offsetTop}px) scale(1.06)`; };
+  const lift = (el, e) => { const p = at(e); drag = { el, gx: p.x - el.offsetLeft, gy: p.y - el.offsetTop, px: p.x, py: p.y, cy: e.clientY };
+    S.ui.dragging = true; el.classList.add("lift"); place(); raf = requestAnimationFrame(edgeScroll); };
+  /* near the top or bottom of the screen, scroll so a playlist can travel the whole list */
+  const edgeScroll = () => { if (!drag) return; const y = drag.cy, step = y < 70 ? -10 : y > innerHeight - 90 ? 10 : 0;
+    if (step) { const before = scrollY; scrollBy(0, step); if (scrollY !== before) { drag.py += scrollY - before; place(); reflow(); } } raf = requestAnimationFrame(edgeScroll); };
+  /* move the held playlist into the slot under the finger; the others slide over (FLIP) */
+  const reflow = () => { const el = drag.el, list = cards(), i = list.indexOf(el);
+    const hit = list.find(c => c !== el && drag.px >= c.offsetLeft && drag.px <= c.offsetLeft + c.offsetWidth && drag.py >= c.offsetTop && drag.py <= c.offsetTop + c.offsetHeight);
+    if (!hit) return; const j = list.indexOf(hit); const before = new Map(list.map(c => [c, [c.offsetLeft, c.offsetTop]]));
+    grid.insertBefore(el, j > i ? hit.nextSibling : hit);
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const c of list) { if (c === el) continue; const [x0, y0] = before.get(c), dx = x0 - c.offsetLeft, dy = y0 - c.offsetTop;
+      if ((dx || dy) && !still && c.animate) c.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }], { duration: 200, easing: "cubic-bezier(.2,.7,.2,1)" }); }
+    place(); };
+  const drop = () => { cancelAnimationFrame(raf); const d = drag; drag = null; S.ui.dragging = false; if (!d) return;
+    const el = d.el; el.classList.remove("lift"); el.classList.add("settle"); el.style.transform = ""; setTimeout(() => el.classList.remove("settle"), 220);
+    swallow = true; setTimeout(() => (swallow = false), 400); /* the click a browser sends after letting go isn't a tap */
+    const now = cards().map(c => c.dataset.id);
+    if (now.join() !== ids.join()) { /* a filtered view only reorders the playlists it shows, in the places they held */
+      const slots = ids.map(x => S.meta.order.indexOf(x)).sort((a, b) => a - b), order = S.meta.order.slice(); slots.forEach((k, n) => (order[k] = now[n])); ids = now;
+      S.meta.order = order; saveMeta().then(() => announce({ t: "meta" })).catch(() => toast("Couldn't save the new order.")); }
+    if (S.ui.pendingRender) { S.ui.pendingRender = false; setTimeout(() => render(), 230); } };
+  grid.addEventListener("pointerdown", e => { const el = e.target.closest && e.target.closest(".pl"); if (!el || (e.pointerType === "mouse" && e.button !== 0)) return;
+    cancelPress(); press = { el, x: e.clientX, y: e.clientY, id: e.pointerId, last: e };
+    press.timer = setTimeout(() => { const pr = press; press = null; if (!pr || !document.contains(pr.el)) return; if (!S.ui.homeEdit) homeEditing(true); lift(pr.el, pr.last); }, S.ui.homeEdit ? 200 : 450); });
+  grid.addEventListener("contextmenu", e => { if (e.target.closest && e.target.closest(".pl")) e.preventDefault(); });
+  grid.addEventListener("dragstart", e => e.preventDefault());
+  grid.addEventListener("click", e => { const el = e.target.closest && e.target.closest(".pl"); if (!el) return; if (swallow || drag) { e.preventDefault(); return; }
+    if (S.ui.homeEdit) { e.preventDefault(); playlistActions(el.dataset.id); } });
+  /* moves and releases are followed on the whole page: the held card moves around in the list, and a mouse can leave the grid */
+  homeG = {
+    move: e => { if (press && e.pointerId === press.id) { press.last = e; if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 9) cancelPress(); return; } /* moving before the hold is up: a scroll */
+      if (!drag) return; const p = at(e); drag.px = p.x; drag.py = p.y; drag.cy = e.clientY; place(); reflow(); },
+    end: () => { cancelPress(); if (drag) drop(); } };
+}
+let homeG = null;
+document.addEventListener("pointermove", e => homeG && homeG.move(e));
+document.addEventListener("pointerup", () => homeG && homeG.end()); document.addEventListener("pointercancel", () => homeG && homeG.end());
+/* while a playlist is held, the finger moves it instead of scrolling the page */
+document.addEventListener("touchmove", e => { if (S.ui.dragging && e.cancelable) e.preventDefault(); }, { passive: false });
+/* ending edit mode: Done, Escape, or a tap anywhere that isn't a playlist */
+document.addEventListener("keydown", e => { if (e.key === "Escape" && S.ui.homeEdit && !sheetStack.length && S.route.v === "home") homeEditing(false); });
+document.addEventListener("click", e => { if (!S.ui.homeEdit || S.route.v !== "home" || sheetStack.length) return; const t = e.target;
+  if (t.closest && !t.closest(".pl, .editbar, #sheets, .sheetwrap, #player, #toast")) homeEditing(false); });
+/* a playlist's cover, name and place, or delete it (from edit mode on the home screen) */
+function playlistActions(id) {
+  const pl = S.pls.get(id); if (!pl) return;
+  sheet({ title: "Edit playlist", build: close => {
+    const nm = h("input", { type: "text", maxlength: "100", value: pl.name, "aria-label": "Playlist name" });
+    const saveName = () => { const v = nm.value.trim(); if (!v) return toast("Give it a name."); if (v === pl.name) return close(); close(); act(() => mutate(id, p => { p.name = v.slice(0, 100); Core.log(p, "rename"); }), "Renamed."); };
+    nm.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); saveName(); } });
+    const file = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async e => { const f = e.target.files[0]; if (!f) return; close();
+      try { const url = await shrink(f); await act(() => mutate(id, p => { p.artwork = url; Core.log(p, "artwork"); }), "Cover changed."); } catch { toast("Couldn't read that image."); } } });
+    const pos = S.meta.order.indexOf(id), last = S.meta.order.length - 1;
+    const move = d => { close(); const o = S.meta.order.slice(), j = pos + d; if (j < 0 || j > last) return; [o[pos], o[j]] = [o[j], o[pos]]; S.meta.order = o; saveMeta().catch(() => {}); render(); };
+    return [h("div", { class: "pledit" }, h("div", { class: "pecov" }, mosaic(pl)), h("div", { class: "btns" },
+        h("label", { class: "btn sm", tabindex: "0", onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); file.click(); } }, onclick: () => file.click() }, "Change cover"), file,
+        pl.artwork ? btn("Use song covers", "ghost sm", () => { close(); act(() => mutate(id, p => { p.artwork = null; Core.log(p, "artwork"); }), "Using song covers."); }) : null)),
+      h("div", { class: "field" }, h("label", { text: "Name" }), h("div", { class: "inl" }, nm, btn("Rename", "sm", saveName))),
+      last > 0 ? h("div", { class: "btns" }, btn("Move earlier", "ghost sm", () => move(-1), { disabled: pos <= 0 ? true : null }), btn("Move later", "ghost sm", () => move(1), { disabled: pos >= last ? true : null })) : null,
+      h("div", { class: "foot" }, btn("Delete playlist", "danger", () => { close(); deletePlaylist(id); }, { ic: "trash" }), btn("Close", "ghost", () => close()))];
+  } });
 }
 
 /* ---------- engine picker (per playlist) ---------- */
@@ -78,7 +164,7 @@ function defaultModel(p) { return "auto"; }
 function aiCtx(eng) { const p = eng && eng.provider; const a = (p && S.meta.ai[p]) || {}; return { provider: p, model: (eng && eng.model) || "auto", key: a.key || null, models: a.models || [], memo: a.memo || {}, onMemo: memo => { if (S.meta.ai[p]) { S.meta.ai[p].memo = memo; saveMeta().catch(() => {}); } } }; }
 function engineLabel(eng) { if (!eng || eng.mode !== "ai") return "Classic"; const p = Engines.PROVIDERS[eng.provider]; return `AI (${p ? p.label.replace(/ \(.*\)/, "") : "?"}, ${!eng.model || eng.model === "auto" ? "automatic model" : eng.model})`; }
 const CLASSIC_NOTE = "No AI and no key. It finds songs through music databases and what real listeners play together, and learns from every approval and rejection.";
-const CLASSIC_MORE = "It reads descriptions with built-in rules and knows over 2,000 genre names. It starts from a map of about 580 scenes and 11,000 artists, finds songs through Deezer and the listening habits of ListenBrainz users (similar artists for 98,000 artists come built in), keeps to your genres with MusicBrainz, Wikidata and Discogs data, listens to song previews to tell the style of artists no database knows yet, checks energy, tempo and mood with ReccoBeats or the preview, and checks the language with LRCLIB lyrics.";
+const CLASSIC_MORE = "It reads descriptions with built-in rules and knows over 2,000 genre names. It starts from a map of about 580 scenes and 11,000 artists, finds songs through Deezer and the listening habits of ListenBrainz users (similar artists for 98,000 artists come built in) and of Last.fm users if you add a Last.fm key in Settings, keeps to your genres with MusicBrainz, Wikidata and Discogs data, listens to song previews to tell the style of artists no database knows yet, checks energy, tempo and mood with ReccoBeats or the preview, and checks the language with LRCLIB lyrics.";
 function enginePicker(eng, onchange) {
   const box = h("div");
   const draw = () => {

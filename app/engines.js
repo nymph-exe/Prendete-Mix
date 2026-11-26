@@ -471,6 +471,16 @@ async function stylesFor(tracks, { retry = false } = {}) {
     ART.set(id, a && nameOk(a.name, Core.firstArtist(t.a)) ? { v: vecOf(a.tags), area: a.area, type: a.type, by: a.by, mb, at: Date.now() } : { v: null, at: Date.now() }); }
   artSave();
 }
+/* Last.fm listeners' tags for artists the other tag sources don't know (only with the user's Last.fm key); by MusicBrainz ID when
+   known, so two artists with the same name aren't mixed up. Fast, so it goes before Discogs and the preview model */
+async function lfmFill(list, budget) {
+  const LF = Cat.LastFm; if (!LF || !LF.key() || !budget || budget.n <= 0) return;
+  const todo = []; for (const x of list) { const a = ART.get(x.id); if (!x.id || !x.name || (a && (a.v || a.lf))) continue; if (todo.length >= budget.n) break; todo.push(x); }
+  budget.n -= todo.length; if (!todo.length) return;
+  await Promise.all(todo.map(async x => { const prev = ART.get(x.id) || {}; let tags = null; try { tags = await LF.artistTags(x.name, prev.mb || null); } catch { return; }
+    ART.set(x.id, Object.assign({}, ART.get(x.id) || {}, { v: tags ? vecOf(tags) : prev.v || null, lf: 1, at: Date.now() })); }));
+  artSave();
+}
 /* Discogs styles for artists the tag sources don't know (new or niche artists); limited to a few per run, remembered afterwards */
 async function discogsFill(list, budget) {
   const todo = []; for (const x of list) { const a = ART.get(x.id); if (!x.id || !x.name || (a && (a.v || a.dg))) continue; if (todo.length >= budget.n) break; todo.push(x); }
@@ -574,6 +584,9 @@ async function styleProfile(P, ctx, say) {
   if (sample.length || want.length || broad.length) { say && say("Reading genre tags…"); await stylesFor(sample.map(x => x[0]).concat(poolS)); }
   P.dgBudget = { n: 4 }; /* Discogs allows one request every 2.5 s without a key: a few per run */
   /* starting songs whose artists no source knows: what they sound like (Sound), before the playlist's taste is set */
+  P.lfBudget = { n: 12 }; /* Last.fm (with a key) is fast and generous: it goes first for starting artists no tag source knows */
+  if (Cat.LastFm && Cat.LastFm.key()) { const bare = sample.map(x => x[0]).filter(t => (t.aid || [])[0] && !((ART.get(t.aid[0]) || {}).v)).slice(0, 6);
+    if (bare.length) await lfmFill(bare.map(t => ({ id: t.aid[0], name: Core.firstArtist(t.a) })), P.lfBudget).catch(() => {}); }
   P.sndBudget = { n: 4 }; const thinSeeds = sample.map(x => x[0]).filter(t => (t.aid || [])[0] && t.prev && !((ART.get(t.aid[0]) || {}).v)).slice(0, 3);
   if (thinSeeds.length && G.Sound) { say && say("Listening to songs no database knows yet…"); await soundFill(thinSeeds.map(t => ({ id: t.aid[0], name: Core.firstArtist(t.a), prev: t.prev, dz: t.dz, prevAt: t.prevAt })), P.sndBudget).catch(() => {}); }
   if (want.length) { const unk = [...P.W.values()].filter(c => { const a = ART.get(c.id); return a && !a.v; }).sort((a, b) => b.w - a.w).slice(0, 4).map(c => ({ id: c.id, name: c.name }));
@@ -722,6 +735,16 @@ async function classicRun(ctx, opt) {
     const top = [...agg.values()].sort((a, b) => b.s - a.s).slice(0, 14);
     await Promise.all(top.map(async g => { if (stop()) return; try { const a = await idByName(g.n, 300); if (a) addC(a.id, a.name, base * .5 * g.s / top[0].s, Core.firstArtist(g.from.a), "lbrec", .45, g.from.t, a.fans); } catch {} }));
   })().catch(() => {});
+  /* Last.fm (only with the user's key): artists its listeners play alongside the starting artists, and alongside the starting songs */
+  const lfmJob = (async () => { const LF = Cat.LastFm; if (!LF || !LF.key() || stop()) return;
+    await Promise.all(seeds.slice(0, seeds.length >= 16 ? 8 : 5).map(async (s, i) => { if (stop()) return; const sim = await LF.similarArtists(s.name, i < 4 ? 15 : 8).catch(() => []); const max = Math.max(...sim.map(x => x.score), 1e-6);
+      await Promise.all(sim.map(async x => { if (stop() || P.avoid.has(Core.norm(x.name))) return; try { const a = await idByName(x.name); if (a) addC(a.id, a.name, s.ws * .7 * (x.score / max), s.name, "lfm", seedSF(s), null, a.fans); } catch {} })); }));
+    const songs = [...P.refs, ...P.ev.manual.slice().sort(() => Math.random() - .5)].slice(0, 4); const agg = new Map();
+    await Promise.all(songs.map(async t => { if (stop()) return; const sim = await LF.similarTracks(t.t, Core.firstArtist(t.a), 30).catch(() => []);
+      sim.forEach((x, i) => { const n = firstName(x.a); if (!n || nameOk(n, Core.firstArtist(t.a))) return; const g = agg.get(n) || { n, s: 0, from: t }; g.s += (x.score || .5) / (1 + i * .05); agg.set(n, g); }); }));
+    const top = [...agg.values()].sort((a, b) => b.s - a.s).slice(0, 12);
+    await Promise.all(top.map(async g => { if (stop()) return; try { const a = await idByName(g.n, 300); if (a) addC(a.id, a.name, base * .45 * g.s / top[0].s, Core.firstArtist(g.from.a), "lfmrec", .45, g.from.t, a.fans); } catch {} }));
+  })().catch(() => {});
   // the style itself: songs carrying the requested genre tag on ListenBrainz → their artists (a deep-cuts window when hits are unwanted)
   /* no style named but a mood is: listeners' own mood tags on ListenBrainz ("sad", "melancholic") find songs that really have that mood */
   const MOOD_TAGS = { Sad: ["sad", "melancholic"], Chill: ["chill", "chillout"], Romantic: ["love songs", "ballad"], Dark: ["dark"], "Feel-good": ["happy", "feel good"], Hype: ["energetic"], Sensual: ["sensual", "sexy"], Workout: ["energetic"], Focus: ["instrumental", "study"] };
@@ -753,10 +776,10 @@ async function classicRun(ctx, opt) {
   /* artists the user keeps rejecting: their close neighbours rank lower too */
   const NEG = new Map(); const negJob = Promise.all(P.negIds.map(async id => { try { (await Deezer.related(id, 20)).forEach((a, k) => NEG.set(a.id, (NEG.get(a.id) || 0) + (k < 10 ? 1 : .5))); } catch {} }));
   /* every source runs at once; after 12 s the run goes ahead with what has come in (later answers are skipped) */
-  await Promise.race([Promise.all([relJob, lbJob, recJob, tagJob, radioJob, negJob, kbJob]), new Promise(r => setTimeout(r, 12000))]); /* a source still running after 12 s is left behind */
+  await Promise.race([Promise.all([relJob, lbJob, recJob, lfmJob, tagJob, radioJob, negJob, kbJob]), new Promise(r => setTimeout(r, 12000))]); /* a source still running after 12 s is left behind */
   for (const c of cand.values()) { const n = NEG.get(c.id) || 0; if (n && !(P.W.get(c.id) || {}).known) c.score /= 1 + .7 * n; }
   if (P.R.gems && !stop()) { /* lesser-known artists cluster together: one more hop from the smallest in-style names */
-    const small = [...cand.values()].filter(c => c.fans && c.fans < 150000 && c.via !== "lbrec" && styleGate(styleFit(c.id, S), S, true)).sort((a, b) => b.score - a.score).slice(0, 10);
+    const small = [...cand.values()].filter(c => c.fans && c.fans < 150000 && c.via !== "lbrec" && c.via !== "lfmrec" && styleGate(styleFit(c.id, S), S, true)).sort((a, b) => b.score - a.score).slice(0, 10);
     await Promise.all(small.map(async s => { try { (await Deezer.related(s.id, 20)).forEach((a, rank) => addC(a.id, a.name, s.score * .8 / (1 + rank * .12), s.name, "related", Math.max(.5, s.seedFit), null, a.fans)); } catch {} })); }
   for (const c of pos) if (c.tags.has("ref") && !c.known) { addC(c.id, c.name, Math.max(c.w, base) * 1.2, null, "ref", 1); const cc = cand.get(c.id); if (cc) cc.via = "ref"; }
   const pool = []; const pseen = new Set(); for (const t of radio.concat(P.pool)) { if (pseen.has(t.id) || P.avoid.has(primary(t)) || blocked(t, P.R)) continue; pseen.add(t.id); pool.push(t); }
@@ -876,6 +899,7 @@ async function classicRun(ctx, opt) {
   const prep = gi => { const group = order.slice(gi, gi + 6); if (!group.length || stop()) return null;
     const ready = Promise.all(group.map(c => (c.pool ? Promise.resolve(c.tracks) : Deezer.top(c.id, P.R.avoidHits ? 25 : 10).then(deep).catch(() => { fails++; return []; }))))
       .then(async tops => { group.forEach((c, k) => { if (!c.pool) titleLang(c.id, tops[k]); }); await stylesFor(tops.flatMap((tr, k) => (group[k].pool ? tr : tr.slice(0, 6))));
+        if (S.strict) await lfmFill(group.filter(c => !c.pool && (ART.get(c.id) || {}).v === null).sort((a, b) => (trustedC(b) - trustedC(a)) || b.score - a.score).slice(0, 3).map(c => ({ id: c.id, name: c.name })), P.lfBudget).catch(() => {});
         if (S.strict) await discogsFill(group.filter(c => !c.pool && (ART.get(c.id) || {}).v === null).sort((a, b) => (trustedC(b) - trustedC(a)) || b.score - a.score).slice(0, 1).map(c => ({ id: c.id, name: c.name })), P.dgBudget);
         if (S.strict && G.Sound) await soundFill(group.map((c, k) => ({ c, t: (tops[k] || [])[0] })).filter(({ c, t }) => !c.pool && t && t.prev && (ART.get(c.id) || {}).v === null && (ART.get(c.id) || {}).dg)
           .sort((a, b) => (trustedC(b.c) - trustedC(a.c)) || b.c.score - a.c.score).slice(0, 1).map(({ c, t }) => ({ id: c.id, name: c.name, prev: t.prev })), P.sndBudget).catch(() => {});
@@ -924,7 +948,7 @@ async function classicRun(ctx, opt) {
       const c = picks[k].c; const from = [...(c.from || [])].filter(Boolean).slice(0, 2);
       const hint = (P.hints || []).find(h => h.id === c.id);
       const why = c.pool ? picks[k].t0._why : c.via === "known" ? `More from ${c.name}, already on this playlist` : hint ? `${c.name} comes up in ${hint.via}'s songs` : c.via === "ref" ? `By ${c.name}, one of your reference artists`
-        : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : c.via === "kb" && c.kb ? (c.kb.tier === "core" ? `One of the artists who define ${c.kb.scene}` : c.kb.tier === "next" ? `A newer or deeper name in ${c.kb.scene}` : `Close to several ${c.kb.scene} artists`) : (from.length ? `Similar to ${from.join(" and ")}` : "Close to this playlist's artists");
+        : c.via === "lb" ? `People who play ${from[0]} also play ${c.name}` : c.via === "lbrec" ? `Listeners of “${c.song}” also play ${c.name}` : c.via === "lfm" ? `Last.fm listeners who play ${from[0]} also play ${c.name}` : c.via === "lfmrec" ? `Last.fm listeners of “${c.song}” also play ${c.name}` : c.via === "tag" ? `Tagged ${from[0] || "this style"} on ListenBrainz` : c.via === "kb" && c.kb ? (c.kb.tier === "core" ? `One of the artists who define ${c.kb.scene}` : c.kb.tier === "next" ? `A newer or deeper name in ${c.kb.scene}` : `Close to several ${c.kb.scene} artists`) : (from.length ? `Similar to ${from.join(" and ")}` : "Close to this playlist's artists");
       buf.push({ t, why, as: c.pool ? maxScore * (t._trust ? .6 : .4) : c.score, sf: picks[k].sf });
     });
     if (buf.length >= 12 || (buf.length && found + buf.length * .7 >= target + 2)) { if (inflight) await inflight; inflight = flush().finally(() => { inflight = null; }); }

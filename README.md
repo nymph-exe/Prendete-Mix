@@ -4,7 +4,7 @@ A playlist maker that runs entirely in the browser: https://nymph-exe.github.io/
 
 Internally it's still the Préndete app, named after the playlist that started it (Préndete 🔥).
 
-Each playlist has its own direction, capacity, recommendations, rejections and status. Nothing is shared between playlists. Data lives in this browser (IndexedDB); Settings → Save backup keeps a copy or moves it to another device.
+On the home screen, hold a playlist until they all shake: keep holding and drag to reorder, or let go and tap one to change its cover, rename or delete it. Each playlist has its own direction, capacity, recommendations, rejections and status. Nothing is shared between playlists. Data lives in this browser (IndexedDB); Settings → Save backup keeps a copy or moves it to another device.
 
 ## Recommendations
 
@@ -33,7 +33,7 @@ GitHub Pages publishes `index.html`, `app/`, `data/` and `vendor/`. `dev/` stays
 |---|---|
 | `index.html` | The app's page |
 | `app/core.js` | Playlist rules: song states, capacity, operations, identity, invariants |
-| `app/catalog.js` | Deezer, Apple Music, MusicBrainz, ListenBrainz, Discogs, Wikidata, ReccoBeats, LRCLIB |
+| `app/catalog.js` | Deezer, Apple Music, MusicBrainz, ListenBrainz, Last.fm, Discogs, Wikidata, ReccoBeats, LRCLIB |
 | `app/reader.js` | Classic's description reader |
 | `app/artists.js` | "Never suggest": finds the artist on each service and matches songs by artist ID |
 | `app/engines.js` | Classic and AI recommendation engines |
@@ -50,7 +50,7 @@ GitHub Pages publishes `index.html`, `app/`, `data/` and `vendor/`. `dev/` stays
 | `vendor/franc.min.js` | franc 6.2.0 language detection (MIT) |
 | `vendor/ort/` | ONNX Runtime Web 1.31.1, single-threaded WebAssembly build (MIT) |
 | `vendor/models/` | Discogs-EffNet (MTG, Universitat Pompeu Fabra), CC BY-NC-ND 4.0: non-commercial use only |
-| `dev/tests/` | `node dev/tests/<name>.test.js`: core rules, reader, genre matching, robustness, "Never suggest", similar artists, Listen (`npm install meyda` first) |
+| `dev/tests/` | `node dev/tests/<name>.test.js`: core rules, reader, genre matching, robustness, "Never suggest", similar artists, Last.fm, Listen (`npm install meyda` first) |
 | `dev/tools/kbwide.js` | `node dev/tools/kbwide.js` rebuilds the wide tier from Deezer's related artists |
 | `dev/tools/kbauto.js` | `node dev/tools/kbauto.js` rebuilds the auto tier from ListenBrainz genre tags and Deezer |
 | `dev/tools/lbsim.py` | Rebuilds `data/similar/` from the ListenBrainz statistics dump (how-to in the file) |
@@ -61,3 +61,4 @@ GitHub Pages publishes `index.html`, `app/`, `data/` and `vendor/`. `dev/` stays
 - MusicBrainz and ListenBrainz data (genre list, genre tree, listening statistics) are CC0, from the MetaBrainz Foundation.
 - Discogs-EffNet is © Music Technology Group, Universitat Pompeu Fabra, under CC BY-NC-ND 4.0 and used unchanged. Because of that license the app is non-commercial; a commercial version would need MTG's proprietary license or a different model. essentia.js itself is AGPL and isn't used: the app computes the model's input in its own code.
 - franc, Meyda and ONNX Runtime Web are MIT; their licenses are in `vendor/`.
+- Last.fm is optional: with your own free API key (Settings), Classic also uses Last.fm listeners' similar artists, similar songs and artist tags, under Last.fm's API terms (non-commercial use, credited with a link). The key stays in the browser and isn't included in backups.

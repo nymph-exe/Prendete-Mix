@@ -130,13 +130,25 @@ function vSettings(v) {
       h("div", { class: "inl" }, key, btn(a.key ? "Check again" : "Save key", "sm", save), a.key ? btn("Remove", "ghost sm", async () => { delete S.meta.ai[k]; await saveMeta().catch(() => {}); toast("Key removed."); render(); }) : null), stat));
   }
   m.append(ai);
+  /* Last.fm: optional, with the user's own free key, kept in this browser like the AI keys */
+  const lf = (S.meta.keys || {}).lastfm || null;
+  const lkey = h("input", { type: "password", autocomplete: "off", placeholder: lf ? "Key saved · paste a new one to replace it" : "Paste your API key", "aria-label": "Last.fm API key" });
+  const lstat = h("p", { class: "small", "aria-live": "polite", text: lf ? "Connected. Classic also uses Last.fm listeners' similar artists, similar songs and tags." : "Not set up" });
+  const lsave = async () => { const v = lkey.value.trim() || lf; if (!v) return toast("Paste a key first."); lstat.textContent = "Checking the key…";
+    try { if (!(await Catalog.LastFm.check(v))) throw new Error("Last.fm didn't answer with that key."); S.meta.keys = Object.assign({}, S.meta.keys, { lastfm: v }); Catalog.SETTINGS.lastfm = v; await saveMeta(); toast("Last.fm connected."); render(); }
+    catch (e) { lstat.textContent = e.code === 10 || e.code === 26 ? "That key wasn't accepted. Copy the API key (not the shared secret) from your Last.fm API account page." : (e.message || "Couldn't reach Last.fm. Try again."); } };
+  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Last.fm" }),
+    h("p", { class: "lede", text: "Optional. With your own free key, Classic also uses what Last.fm listeners play together and how they tag artists, which helps most with smaller and regional artists. The key stays in this browser." }),
+    h("div", { class: "prov" }, h("div", { class: "nm" }, "Last.fm API key", lf ? h("span", { class: "tag", text: "Connected" }) : null),
+      h("p", { class: "small" }, "Free from your Last.fm account (non-commercial use) · ", h("a", { class: "lnk", href: "https://www.last.fm/api/account/create", target: "_blank", rel: "noopener noreferrer", text: "Get a key ↗" })),
+      h("div", { class: "inl" }, lkey, btn(lf ? "Check again" : "Save key", "sm", lsave), lf ? btn("Remove", "ghost sm", async () => { const k = Object.assign({}, S.meta.keys); delete k.lastfm; S.meta.keys = k; Catalog.SETTINGS.lastfm = null; await saveMeta().catch(() => {}); toast("Key removed."); render(); }) : null), lstat)));
   m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Never suggest" }), h("p", { class: "lede", text: "Artists no playlist should ever suggest, as lead or featured. Search and pick the artist you mean: they're matched by their IDs on Deezer, MusicBrainz and Apple Music, so other artists who share the name stay allowed. Changes save right away." }),
     banEditor(S.meta.never, { label: "Artists", onchange: () => act(() => saveMeta(), "Saved.") })));
   const cc = h("select", { "aria-label": "Apple Music store", onchange: e => { S.meta.country = e.target.value; Catalog.SETTINGS.country = e.target.value; saveMeta().catch(() => {}); toast("Saved."); } });
   [["us", "United States"], ["pa", "Panamá"], ["mx", "México"], ["es", "España"], ["co", "Colombia"], ["pr", "Puerto Rico"], ["ar", "Argentina"], ["br", "Brasil"], ["gb", "United Kingdom"]].forEach(([k, l]) => { const o = h("option", { value: k, text: l }); if (k === S.meta.country) o.selected = true; cc.append(o); });
   m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Search and samples" }), h("div", { class: "field" }, h("label", { text: "Apple Music store (used when Deezer doesn't have a song)" }), cc)));
   const inp = h("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: e => { const f = e.target.files[0]; if (f) restoreBackup(f); e.target.value = ""; } });
-  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Backup" }), h("p", { class: "lede", text: "Save a copy now and then, or use it to move your playlists to another device. AI keys aren't included." }),
+  m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Backup" }), h("p", { class: "lede", text: "Save a copy now and then, or use it to move your playlists to another device. AI and Last.fm keys aren't included." }),
     h("div", { class: "btns" }, btn("Save backup", "", saveBackup, { ic: "dl" }), h("label", { class: "btn ghost", tabindex: "0", onclick: () => inp.click(), onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inp.click(); } } }, "Restore backup"), inp)));
   const old = h("div", { class: "card" }, h("h2", { class: "sec", text: "From the old app" }));
   const un = (S.meta.unsorted || []).filter(id => getTrack(id));
@@ -149,10 +161,10 @@ function vSettings(v) {
   m.append(old);
   m.append(h("div", { class: "card" }, h("h2", { class: "sec", text: "Start over" }), h("p", { class: "lede", text: "Erases every playlist, decision and key in this browser. Préndete 🔥 is set up again from its saved copy." + (DB.mode === "ls" ? " (This browser is using simpler storage.)" : "") }),
     btn("Erase everything in this browser", "danger", eraseAll, { ic: "trash" })));
-  m.append(h("p", { class: "small", style: "margin-top:20px", text: "Songs and samples from Deezer and Apple Music. Music data from MusicBrainz, ListenBrainz, Discogs, Wikidata, ReccoBeats and LRCLIB." }));
+  m.append(h("p", { class: "small", style: "margin-top:20px" }, "Songs and samples from Deezer and Apple Music. Music data from MusicBrainz, ListenBrainz, Discogs, Wikidata, ReccoBeats and LRCLIB", S.meta.keys.lastfm ? h("span", {}, ", and ", h("a", { class: "lnk", href: "https://www.last.fm", target: "_blank", rel: "noopener noreferrer", text: "Last.fm" })) : null, "."));
 }
 function saveBackup() {
-  const meta = clone(S.meta); delete meta.ai;
+  const meta = clone(S.meta); delete meta.ai; delete meta.keys; /* keys never go in a backup */
   const data = { app: "prendete-mix", v: 3, at: Date.now(), meta, playlists: [...S.pls.values()], snaps: [...S.snaps.entries()], tracks: [...S.tr.values()].map(slimTrack) };
   download(`mixer-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data), "application/json"); toast("Backup saved.");
 }
@@ -165,6 +177,7 @@ function fixMeta(m, defaults = {}) {
   if (typeof o.country !== "string" || !/^[a-z]{2}$/.test(o.country)) o.country = "us";
   delete o.autoNext; delete o.loopV; /* the old "play the next sample" setting: samples always repeat now */
   if (!o.ai || typeof o.ai !== "object" || Array.isArray(o.ai)) o.ai = {};
+  if (!o.keys || typeof o.keys !== "object" || Array.isArray(o.keys)) o.keys = {}; if (typeof o.keys.lastfm !== "string") delete o.keys.lastfm;
   o.unsorted = Array.isArray(o.unsorted) ? o.unsorted.filter(x => typeof x === "string") : [];
   return o;
 }
@@ -178,7 +191,7 @@ async function restoreBackup(file) {
   for (const j of S.jobs.values()) j.stop = true;
   data.tracks = (Array.isArray(data.tracks) ? data.tracks : []).map(Core.checkTrack).filter(Boolean);
   data.snaps = (Array.isArray(data.snaps) ? data.snaps : []).filter(x => Array.isArray(x) && typeof x[0] === "string" && data.playlists.some(p => p.id === x[0])).filter(([, v]) => { try { Core.checkShape(v); return true; } catch { return false; } });
-  const meta = Object.assign(fixMeta(data.meta), { ai: S.meta.ai, order: data.playlists.map(p => p.id), bansV2: 1 });
+  const meta = Object.assign(fixMeta(data.meta), { ai: S.meta.ai, keys: S.meta.keys, order: data.playlists.map(p => p.id), bansV2: 1 });
   const ops = [...S.pls.keys()].map(k => ({ store: "kv", key: "pl:" + k, del: true })).concat([...S.snaps.keys()].map(k => ({ store: "kv", key: "snap:" + k, del: true })),
     data.playlists.map(p => ({ store: "kv", key: "pl:" + p.id, value: p })), data.snaps.map(([k, v]) => ({ store: "kv", key: "snap:" + k, value: v })), data.tracks.map(t => ({ store: "tracks", value: t })), [{ store: "kv", key: "meta", value: meta }]);
   try { await DB.tx(ops); } catch (e) { return toast(e.message || "Couldn't restore. Nothing changed."); }
@@ -330,7 +343,7 @@ async function boot() {
   }
   const old = S.meta && ("autoNext" in S.meta || "loopV" in S.meta); S.meta = fixMeta(S.meta, { never: ["DaBaby"] }); if (old) saveMeta().catch(() => {});
   S.meta.order = S.meta.order.filter(id => S.pls.has(id)).concat([...S.pls.keys()].filter(id => !S.meta.order.includes(id)));
-  Catalog.SETTINGS.country = S.meta.country;
+  Catalog.SETTINGS.country = S.meta.country; Catalog.SETTINGS.lastfm = S.meta.keys.lastfm || null;
   S.route = parseRoute(); render(true);
   setTimeout(backfillLanguages, 4000);
   setTimeout(() => upgradeBans().catch(() => {}), 2500);

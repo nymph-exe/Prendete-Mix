@@ -242,6 +242,35 @@ const LB = {
   async tagSimilar(tag) { try { const d = await lbxLimit(() => getJSON(`${LBX}/tag-similarity/json?tag=${encodeURIComponent(tag)}`)); return (Array.isArray(d) ? d : []).map(x => ({ tag: String(x.similar_tag).toLowerCase(), count: x.count || 0 })); } catch { return []; } }
 };
 
+/* ---------- Last.fm, with the user's own free API key (Settings): similar artists and songs from what its listeners play,
+   and the tags they give artists. Non-commercial use, credited with a link. A few requests a second at most. ---------- */
+const lfLimit = paced(pacer(4)), LFM = "https://ws.audioscrobbler.com/2.0/";
+/* listeners' tags that say nothing about the style ("under 2000 listeners", "albums i own", "favorites") */
+const LF_JUNK = /listeners|albums? i own|favou?rit|check ?(it )?out|\bmy |seen live|spotify|^all$|^\d+$|^best |awesome|^love$|beautiful/;
+const lfList = x => (Array.isArray(x) ? x : x && typeof x === "object" ? [x] : []); /* one result comes back as an object, not a list */
+const LastFm = {
+  key: () => SETTINGS.lastfm || null,
+  async call(method, params, key = LastFm.key()) {
+    if (!key) return null;
+    const q = new URLSearchParams(Object.assign({ method, api_key: key, format: "json", autocorrect: "1" }, params));
+    let d; try { d = await lfLimit(() => getJSON(LFM + "?" + q, {}, 15000)); } catch (e) { if (e.status === 403) { const x = new Error("That Last.fm key wasn't accepted."); x.code = 10; throw x; } throw e; }
+    if (d && d.error) { if (d.error === 6) return null; /* not found */ const x = new Error(d.message || "Last.fm didn't answer."); x.code = d.error; throw x; }
+    return d;
+  },
+  /* a key works if Last.fm answers with it */
+  async check(key) { const d = await this.call("artist.getinfo", { artist: "Cher" }, key); return !!(d && d.artist); },
+  /* → [{ name, mbid, score 0–1 }] */
+  async similarArtists(name, limit = 20) { const d = await this.call("artist.getsimilar", { artist: name, limit });
+    return lfList(d && d.similarartists && d.similarartists.artist).map(a => ({ name: String(a.name || ""), mbid: a.mbid || null, score: +a.match || 0 })).filter(a => a.name); },
+  /* → [{ t, a, score 0–1 }] */
+  async similarTracks(title, artist, limit = 30) { const d = await this.call("track.getsimilar", { track: title, artist, limit });
+    return lfList(d && d.similartracks && d.similartracks.track).map(t => ({ t: String(t.name || ""), a: String((t.artist && t.artist.name) || ""), score: +t.match || 0 })).filter(t => t.t && t.a); },
+  /* → {tag: weight} from listeners' tags (count is 0–100 relative to the top tag), or null */
+  async artistTags(name, mbid) { const d = await this.call("artist.gettoptags", mbid ? { mbid } : { artist: name }); const out = {};
+    for (const t of lfList(d && d.toptags && d.toptags.tag)) { const n = String(t.name || "").toLowerCase().trim(), c = +t.count || 0;
+      if (n && c >= 5 && !LF_JUNK.test(n)) out[n] = Math.max(out[n] || 0, c); }
+    return Object.keys(out).length ? out : null; }
+};
 /* ---------- Discogs: release styles (very fine-grained: "UK Drill", "Lo-Fi", "Bachata"…). No key; 25 requests a minute ---------- */
 const dgLimit = paced(pacer(.4));
 const Discogs = {
@@ -415,7 +444,7 @@ function guessLang(title, lettersOnly) {
   const best = Object.entries(sc).sort((a, b) => b[1] - a[1]); if (!best[0][1] || best[0][1] === best[1][1]) return null; return best[0][0];
 }
 
-const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, Similar, LB, Discogs, Wikidata, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
+const API = { SETTINGS, limiter, pacer, sleep, https, getJSON, postJSON, mnorm, match, expOf, dz, Deezer, ITunes, MusicBrainz, ListenBrainz, Similar, LastFm, LB, Discogs, Wikidata, ReccoBeats, LRCLIB, LANG_NAMES, detectLang, languageOf, resolve, complete, guessLang };
 G.Catalog = API;
 if (typeof module !== "undefined") module.exports = API;
 })(typeof window !== "undefined" ? window : globalThis);
